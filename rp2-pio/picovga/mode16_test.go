@@ -106,3 +106,43 @@ func TestRGB555FrameWalk(t *testing.T) {
 		t.Errorf("frame = %d cycles, want %d", cycles, want)
 	}
 }
+
+// TestFlatLineWords checks that a flat colour scanline occupies exactly one
+// line, for a range of bar counts including ones that do not divide the visible
+// area evenly.
+func TestFlatLineWords(t *testing.T) {
+	m := Mode800x600RGB555
+	for _, n := range []int{1, 2, 3, 7, 8, 8, 16, 32} {
+		colours := make([]Colour, n)
+		for i := range colours {
+			colours[i] = RGB555(uint8(i), uint8(31-i), uint8(i*2))
+		}
+		words := m.FlatLineWords(colours)
+		if got, want := m.LineCyclesOf(words), m.LineCycles(); got != want {
+			t.Errorf("%d bars: line = %d cycles, want %d", n, got, want)
+		}
+		for i, w := range words[1:] {
+			if n := (w >> 16) & Dark16MaxCount; n > Dark16MaxCount {
+				t.Errorf("%d bars: word %d counter %d overflows", n, i+1, n)
+			}
+		}
+	}
+}
+
+func TestBlankLineWords(t *testing.T) {
+	m := Mode800x600RGB555
+	words := m.BlankLineWords()
+	if got, want := m.LineCyclesOf(words), m.LineCycles(); got != want {
+		t.Errorf("blank line = %d cycles, want %d", got, want)
+	}
+}
+
+// TestLineCyclesOfVisible checks the decoder agrees with the mode's own
+// accounting for a full pixel line.
+func TestLineCyclesOfVisible(t *testing.T) {
+	m := Mode800x600RGB555
+	words := []uint32{m.SyncWord(), m.BackPorchWord(), m.OutputWord(), m.FrontPorchWord()}
+	if got, want := m.LineCyclesOf(words), m.LineCycles(); got != want {
+		t.Errorf("visible line = %d cycles, want %d", got, want)
+	}
+}

@@ -252,3 +252,56 @@ func (m Mode) VisibleLine(line int) (int, bool) {
 	}
 	return (line - top) / m.VScale, true
 }
+
+// wordCycles returns how many cycles a control word occupies, including the
+// dispatch of the next command, by looking at the routine it jumps to.
+func (m Mode) wordCycles(w uint32) int {
+	switch uint8(w >> 27) {
+	case BaseOffset + BaseSync:
+		return syncRoutineCycles(int(w & 0x07ff_ffff))
+	case BaseOffset + BaseDark:
+		return m.darkWordCycles(w)
+	case BaseOffset + BaseOutput:
+		return outputRoutineCycles(m.Width(), m.CPP())
+	}
+	return 0
+}
+
+// LineCyclesOf returns the total time a composed scanline occupies, in PIO
+// clock cycles. A line that does not come to exactly LineCycles will not hold a
+// steady picture, so this is worth checking against a line you assemble.
+func (m Mode) LineCyclesOf(words []uint32) int {
+	cycles := 0
+	for _, w := range words {
+		cycles += m.wordCycles(w)
+	}
+	return cycles
+}
+
+// FlatLineWords assembles a scanline of flat colour bars, dividing the visible
+// area equally between the colours given. Such a line needs neither a
+// framebuffer nor DMA, since it uses only the sync and dark routines, which
+// makes it a useful first test of a display's timing.
+//
+// The bar widths are apportioned so they always total the visible area exactly,
+// even when the colours do not divide it evenly.
+func (m Mode) FlatLineWords(colours []Colour) []uint32 {
+	words := make([]uint32, 0, len(colours)+4)
+	words = append(words, m.SyncWord())
+	// The full back porch here: nothing shortens it, there being no output
+	// routine on this line to spend the extra cycle.
+	words = append(words, m.darkWord(uint32(m.HBack*m.ClocksPerPixel-4), 0))
+	visible, used := m.HVisible*m.ClocksPerPixel, 0
+	for i, c := range colours {
+		end := visible * (i + 1) / len(colours)
+		words = append(words, m.darkRun(end-used, uint16(c))...)
+		used = end
+	}
+	words = append(words, m.darkWord(uint32(m.HFront*m.ClocksPerPixel-4), 0))
+	return words
+}
+
+// BlankLineWords assembles a scanline with nothing visible on it.
+func (m Mode) BlankLineWords() []uint32 {
+	return append([]uint32{m.SyncWord()}, m.BlankWords()...)
+}

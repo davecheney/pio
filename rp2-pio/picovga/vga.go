@@ -76,37 +76,32 @@ type VGA struct {
 	blank                     []uint32
 }
 
-// NewVGA prepares the state machine, pins and DMA channel to display fb in the
-// given mode. Call Start to begin output.
-func NewVGA(cfg Config, m Mode, fb *Framebuffer16) (*VGA, error) {
+// Setup claims a state machine, loads the 16 bit base program and configures
+// the pins and clock for the mode, leaving it disabled.
+//
+// It is the part of NewVGA that has nothing to do with DMA, exported so a
+// program can drive the state machine itself by writing control words. Pixel
+// output needs DMA, but sync and flat colour do not.
+func Setup(cfg Config, m Mode) (pio.StateMachine, error) {
+	var sm pio.StateMachine
 	if err := m.Validate(); err != nil {
-		return nil, err
+		return sm, err
 	}
 	if m.PixelBits != 16 {
-		return nil, ErrModePixelBits
+		return sm, ErrModePixelBits
 	}
-	if fb.Width != m.Width() || fb.Height != m.Height() {
-		return nil, ErrFramebufferSize
-	}
-	if len(fb.Pix) < fb.Width*fb.Height || fb.Width%2 != 0 {
-		return nil, ErrFramebufferSize
-	}
-	if cfg.DMAChannel >= numDMAChannels {
-		return nil, ErrDMAChannel
-	}
-
 	prog, err := NewBase16(m.CPP())
 	if err != nil {
-		return nil, err
+		return sm, err
 	}
 	p := cfg.PIO
 	offset, err := p.AddProgram(prog.Instructions, prog.Origin)
 	if err != nil {
-		return nil, err
+		return sm, err
 	}
-	sm, err := p.ClaimStateMachine()
+	sm, err = p.ClaimStateMachine()
 	if err != nil {
-		return nil, err
+		return sm, err
 	}
 
 	mode := p.PinMode()
@@ -115,20 +110,15 @@ func NewVGA(cfg Config, m Mode, fb *Framebuffer16) (*VGA, error) {
 			continue
 		}
 		(cfg.ColourBase + machine.Pin(i)).Configure(machine.PinConfig{Mode: mode})
-	}
-	cfg.HSync.Configure(machine.PinConfig{Mode: mode})
-	for i := 0; i < ColourPins; i++ {
-		if cfg.SkipColourPins&(1<<uint(i)) != 0 {
-			continue
-		}
 		sm.SetPindirsConsecutive(cfg.ColourBase+machine.Pin(i), 1, true)
 	}
+	cfg.HSync.Configure(machine.PinConfig{Mode: mode})
 	sm.SetPindirsConsecutive(cfg.HSync, 1, true)
 	cfg.VSync.Configure(machine.PinConfig{Mode: machine.PinOutput})
 
 	whole, frac, err := pio.ClkDivFromFrequency(m.PIOFrequency(), machine.CPUFrequency())
 	if err != nil {
-		return nil, err
+		return sm, err
 	}
 
 	smcfg := pio.DefaultStateMachineConfig()
@@ -143,6 +133,25 @@ func NewVGA(cfg Config, m Mode, fb *Framebuffer16) (*VGA, error) {
 	smcfg.SetFIFOJoin(pio.FifoJoinTx)
 	smcfg.SetClkDivIntFrac(whole, frac)
 	sm.Init(offset+prog.Entry, smcfg)
+	return sm, nil
+}
+
+// NewVGA prepares the state machine, pins and DMA channel to display fb in the
+// given mode. Call Start to begin output.
+func NewVGA(cfg Config, m Mode, fb *Framebuffer16) (*VGA, error) {
+	if fb.Width != m.Width() || fb.Height != m.Height() {
+		return nil, ErrFramebufferSize
+	}
+	if len(fb.Pix) < fb.Width*fb.Height || fb.Width%2 != 0 {
+		return nil, ErrFramebufferSize
+	}
+	if cfg.DMAChannel >= numDMAChannels {
+		return nil, ErrDMAChannel
+	}
+	sm, err := Setup(cfg, m)
+	if err != nil {
+		return nil, err
+	}
 
 	dma := dmaChannelAt(cfg.DMAChannel)
 	v := &VGA{
