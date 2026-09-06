@@ -35,6 +35,16 @@ type progCase struct {
 func cases() []progCase {
 	return []progCase{
 		{
+			name: "base16", build: NewBase16, cpp: 8, sidesetBits: 1,
+			origin: BaseOffset, wrapTarget: 10, wrap: 14,
+			minCPP: Base16MinCPP, maxCPP: Base16MaxCPP,
+			extras: []extra{{12, 2}, {14, 2}},
+			golden: []uint16{
+				0x703b, 0x1041, 0x70a5, 0x602b, 0x6010, 0x0045, 0x60a5, 0xc044,
+				0x607b, 0xc504, 0x60a5, 0x603b, 0x6010, 0x004c, 0x6010,
+			},
+		},
+		{
 			name: "base", build: NewBase, cpp: 8, sidesetBits: 1,
 			origin: BaseOffset, wrapTarget: 10, wrap: 14,
 			minCPP: BaseMinCPP, maxCPP: BaseMaxCPP,
