@@ -15,9 +15,9 @@ func TestTimings(t *testing.T) {
 		{"vTotal", vTotal, 525},
 		{"fbWidth", fbWidth, 320},
 		{"fbHeight", fbHeight, 240},
-		{"cpp", cpp, 8},
-		{"lineCycles", lineCycles, 3200},
-		{"pioFreq", pioFreq, 100_700_000},
+		{"cpp", cpp, 4},
+		{"lineCycles", lineCycles, 1600},
+		{"pioFreq", pioFreq, 50_350_000},
 		{"framebuffer bytes", fbWidth * fbHeight * 2, 153_600},
 	} {
 		if tc.got != tc.want {
@@ -92,12 +92,12 @@ func TestWordEncoding(t *testing.T) {
 	}
 }
 
-// TestBlankRunSplit checks the blanking run, too long for one 11 bit counter,
-// is split into commands totalling exactly the intended time.
-func TestBlankRunSplit(t *testing.T) {
+// TestBlankRun checks the blanking commands total exactly the intended time and
+// that every counter fits its field, however many commands that takes.
+func TestBlankRun(t *testing.T) {
 	words := blankWords()
-	if len(words) < 2 {
-		t.Fatalf("blanking fits in %d words, expected it to be split", len(words))
+	if len(words) == 0 {
+		t.Fatal("blanking produced no commands")
 	}
 	total := 0
 	for i, w := range words {
@@ -146,5 +146,31 @@ func TestFrameWalk(t *testing.T) {
 	}
 	if want := vTotal * lineCycles; cycles != want {
 		t.Errorf("frame = %d cycles, want %d", cycles, want)
+	}
+}
+
+// TestDarkRunSplits checks the splitting itself, which this mode's blanking no
+// longer exercises: a run too long for one 11 bit counter must come out as
+// several commands that together last exactly as long as was asked for, none of
+// them shorter than a dark command can be.
+func TestDarkRunSplits(t *testing.T) {
+	for _, cycles := range []int{4, 5, 100, picovga.Dark16MaxCount + 3, picovga.Dark16MaxCount + 4,
+		picovga.Dark16MaxCount + 5, picovga.Dark16MaxCount + 7, 5000, 12345} {
+		words := darkRun(cycles, 0)
+		if len(words) == 0 {
+			t.Errorf("darkRun(%d) produced no commands", cycles)
+			continue
+		}
+		total := 0
+		for i, w := range words {
+			n := (w >> 16) & picovga.Dark16MaxCount
+			if n > picovga.Dark16MaxCount {
+				t.Errorf("darkRun(%d) word %d counter %d overflows", cycles, i, n)
+			}
+			total += wordCycles(w)
+		}
+		if total != cycles {
+			t.Errorf("darkRun(%d) lasts %d cycles", cycles, total)
+		}
 	}
 }
