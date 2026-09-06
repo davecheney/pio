@@ -15,6 +15,11 @@
 // uses the pixel output routine, so no framebuffer and no DMA are needed; the
 // CPU keeps the FIFO fed with a handful of control words per scanline.
 //
+// This example targets PicoVGA's own hardware, an eight bit 3-3-2 resistor
+// ladder, and will NOT drive the Pimoroni Pico VGA Demo Base: that board
+// follows the RP2040 reference design, with five bits per channel six pins
+// apart and sync on GP16 and GP17. Use the picovgafb example for that board.
+//
 // Wiring, following PicoVGA's default pin assignment:
 //
 //	GP0..GP7  eight colour bits through a resistor ladder, 3 red, 3 green,
