@@ -46,15 +46,34 @@ type destination struct {
 	cx, cy int32
 }
 
+// These are chosen by how the last and closest view of each cycle actually
+// looks, not by reputation. The famous valleys and junctions are cusps where
+// two parts of the set meet, and the filaments that make them worth seeing only
+// open up thousands of times deeper than this fixed point format can reach. At
+// this depth they are a thread in a black field: seahorse valley finishes 65%
+// black, the period four junction 93% and scepter valley 94%.
+//
+// The places below finish between a tenth and three fifths black, which leaves
+// both structure and colour on the screen. TestDestinationsLookInteresting
+// measures exactly that and will fail if a coordinate is changed for one that
+// ends up inside the set.
 var destinations = []destination{
-	{"seahorse valley", -7450 * one / 10000, 1130 * one / 10000},
-	{"elephant valley", 2750 * one / 10000, 70 * one / 10000},
-	{"triple spiral", -880 * one / 10000, 6540 * one / 10000},
-	{"period four junction", 2500 * one / 10000, 5000 * one / 10000},
-	{"double scepter", -1002 * one / 10000, 8352 * one / 10000},
-	{"scepter valley", -12500 * one / 10000, 200 * one / 10000},
-	{"mini mandelbrot", -17500 * one / 10000, 0},
+	{"mini mandelbrot", -17500 * one / 10000, 0},  // a whole small copy of the set
+	{"feigenbaum point", -14011 * one / 10000, 0}, // where the period doubling ends
+	{"period two crown", -10000 * one / 10000, 2800 * one / 10000},
+	{"elephant valley", 3000 * one / 10000, 200 * one / 10000},
+	{"misiurewicz point", -7747 * one / 10000, 1374 * one / 10000},
+	{"cusp filaments", 3550 * one / 10000, 1000 * one / 10000},
 }
+
+// maxIter is the iteration limit. Raising it sharpens the set's edge and
+// lengthens the render in proportion.
+//
+// This lives here rather than beside the display loop so that the tests, which
+// run on the host and cannot see a file built only for the target, measure the
+// pictures at the limit the demo really uses. Testing at a different limit is
+// what let a destination through that renders black on hardware.
+const maxIter = 96
 
 // renderer draws the set into a framebuffer a few iterations at a time, so that
 // the work can be fitted into a display loop that must not be kept waiting.

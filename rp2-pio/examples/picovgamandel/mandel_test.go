@@ -203,15 +203,25 @@ func abs32(v int32) int32 {
 func TestZoomApproachesTarget(t *testing.T) {
 	fb := picovga.NewFramebuffer16(160, 120)
 	r := newRenderer(fb, 16)
+	// Head for a destination off the real axis: one on it would be reached even
+	// by a zoom that ignored the imaginary part, which is the fault this is
+	// watching for.
+	for i, c := range destinations {
+		if c.cy != 0 {
+			r.dest = i
+			break
+		}
+	}
 	d := r.target()
 	span, dx, dy := r.xSpan, abs32(r.cx-d.cx), abs32(r.cy-d.cy)
 	if dy == 0 {
-		t.Fatal("test is meaningless: the home view already sits on the destination")
+		t.Fatal("no destination lies off the real axis, so this cannot test the vertical pan")
 	}
 	startDY := dy
+	dest := r.dest
 	for i := 0; i < 24; i++ {
 		r.zoom()
-		if r.dest != 0 {
+		if r.dest != dest {
 			t.Fatalf("step %d: cycle ended sooner than expected", i)
 		}
 		if r.xSpan >= span {
@@ -248,28 +258,63 @@ func TestDestinationsInHomeView(t *testing.T) {
 	}
 }
 
-// TestDestinationsAreOnTheEdge checks each destination sits on the set's
-// boundary, where the interesting structure is, rather than deep inside it or
-// out in the empty exterior. A mistyped coordinate would land in one or the
-// other and give a cycle that zooms into a featureless field.
-func TestDestinationsAreOnTheEdge(t *testing.T) {
-	const maxIter = 200
-	const step = 150 * one / 10000 // 0.015
-	for _, d := range destinations {
-		inSet, escaped := 0, 0
-		for iy := -2; iy <= 2; iy++ {
-			for ix := -2; ix <= 2; ix++ {
-				if escapeCount(d.cx+int32(ix)*step, d.cy+int32(iy)*step, maxIter) >= maxIter {
-					inSet++
-				} else {
-					escaped++
-				}
+// finalView returns the last and closest view of the cycle heading for
+// destination i, which is the one most likely to have closed in on solid black.
+func finalView(t *testing.T, fb *picovga.Framebuffer16, i int) *renderer {
+	t.Helper()
+	r := newRenderer(fb, maxIter)
+	r.dest = i
+	cx, cy, span := r.cx, r.cy, r.xSpan
+	for n := 0; ; n++ {
+		was := r.dest
+		cx, cy, span = r.cx, r.cy, r.xSpan
+		r.zoom()
+		if r.dest != was {
+			break
+		}
+		if n > 1000 {
+			t.Fatalf("destination %d: cycle never reached its zoom limit", i)
+		}
+	}
+	r.dest = i
+	r.setView(cx, cy, span)
+	return r
+}
+
+// TestDestinationsLookInteresting renders the closest view of every cycle and
+// checks there is still something to see in it.
+//
+// A destination can sit right on the set's edge in the opening picture and
+// still finish wholly inside it, every pixel reaching the iteration limit and
+// the screen going black. That is what the famous valleys and junctions do
+// here: their detail lies far deeper than this fixed point format reaches.
+//
+// The limit used is the one the demo renders at, which matters: an earlier
+// version of this test sampled at a higher limit, counted points that escape
+// late as exterior, and passed destinations that come out black on hardware.
+func TestDestinationsLookInteresting(t *testing.T) {
+	for i, d := range destinations {
+		fb := picovga.NewFramebuffer16(160, 120)
+		r := finalView(t, fb, i)
+		r.draw()
+		black, seen := 0, map[uint16]bool{}
+		for _, p := range fb.Pix {
+			if p == 0 {
+				black++
 			}
+			seen[p] = true
 		}
-		if inSet == 0 || escaped == 0 {
-			t.Errorf("%s (%.4f,%.4f): %d of 25 samples inside the set, wanted a mix; the point is not on the edge",
-				d.name, float64(d.cx)/one, float64(d.cy)/one, inSet)
+		pct := 100 * float64(black) / float64(len(fb.Pix))
+		if pct > 70 {
+			t.Errorf("%s: closest view is %.1f%% black, nothing left to look at", d.name, pct)
 		}
+		if pct < 2 {
+			t.Errorf("%s: closest view is only %.1f%% black, the set is out of frame", d.name, pct)
+		}
+		if len(seen) < 20 {
+			t.Errorf("%s: closest view uses only %d colours", d.name, len(seen))
+		}
+		t.Logf("%-20s %5.1f%% black, %3d colours", d.name, pct, len(seen))
 	}
 }
 
