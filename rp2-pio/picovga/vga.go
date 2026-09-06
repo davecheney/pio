@@ -3,9 +3,11 @@
 package picovga
 
 import (
+	"device/rp"
 	"errors"
 	"machine"
 	"runtime/volatile"
+	"unsafe"
 
 	pio "github.com/tinygo-org/pio/rp2-pio"
 )
@@ -19,6 +21,29 @@ var (
 	// ErrFramebufferSize reports a framebuffer that does not match the mode.
 	ErrFramebufferSize = errors.New("picovga: framebuffer does not match the mode")
 )
+
+// setPinInvert makes a pad drive the complement of whatever its peripheral
+// outputs, or stops it doing so.
+//
+// The base program's side-set holds its sync pin high for the length of a sync
+// pulse, which suits a mode whose sync is positive. A mode with negative sync,
+// as 640x480 has, is driven by inverting the pad instead of by assembling a
+// second program.
+//
+// IO_BANK0 holds a status and a control register for each GPIO in turn, eight
+// bytes apart. The override field sits at different bit positions on the RP2040
+// and the RP2350 but under the same name, so these constants resolve correctly
+// for whichever is being built.
+func setPinInvert(p machine.Pin, invert bool) {
+	over := uint32(0) // normal
+	if invert {
+		over = rp.IO_BANK0_GPIO0_CTRL_OUTOVER_INVERT
+	}
+	base := uintptr(unsafe.Pointer(rp.IO_BANK0))
+	reg := (*volatile.Register32)(unsafe.Pointer(base + uintptr(p)*8 + 4))
+	v := reg.Get() &^ uint32(rp.IO_BANK0_GPIO0_CTRL_OUTOVER_Msk)
+	reg.Set(v | over<<rp.IO_BANK0_GPIO0_CTRL_OUTOVER_Pos)
+}
 
 // Config describes how the VGA hardware is wired up.
 type Config struct {
@@ -113,6 +138,10 @@ func Setup(cfg Config, m Mode) (pio.StateMachine, error) {
 		sm.SetPindirsConsecutive(cfg.ColourBase+machine.Pin(i), 1, true)
 	}
 	cfg.HSync.Configure(machine.PinConfig{Mode: mode})
+	// Configure rewrites the pad's control register, so the polarity the mode
+	// asks for has to be applied after it. Setting it either way keeps Setup
+	// repeatable and honours a mode whose sync is negative.
+	setPinInvert(cfg.HSync, !m.PositiveHSync)
 	sm.SetPindirsConsecutive(cfg.HSync, 1, true)
 	cfg.VSync.Configure(machine.PinConfig{Mode: machine.PinOutput})
 

@@ -106,6 +106,34 @@ var Mode800x600 = Mode{
 	PixelBits:     8,
 }
 
+// Mode640x480RGB555 is VESA 640x480 at 60Hz driven from a 320x240 framebuffer
+// of 16 bit RGB555 pixels. Raise HScale and VScale together for a smaller one.
+//
+// VESA gives this mode negative polarity on both sync signals, where 800x600
+// has both positive. Vertical sync is driven by the CPU and follows
+// PositiveVSync directly; horizontal sync comes from the base program's
+// side-set, which holds its pin high for the length of a pulse, so Setup
+// inverts that pad.
+//
+// Two clock cycles per screen pixel gives the divider its closest approach to
+// the 25.175MHz pixel clock this mode wants, +0.087% from either a 125MHz or a
+// 150MHz system clock.
+var Mode640x480RGB555 = Mode{
+	Name:       "640x480@60 RGB555",
+	PixelClock: 25_175_000,
+
+	HVisible: 640, HFront: 16, HSync: 96, HBack: 48,
+	VVisible: 480, VFront: 10, VSync: 2, VBack: 33,
+
+	ClocksPerPixel: 2,
+	HScale:         2,
+	VScale:         2,
+
+	PositiveHSync: false,
+	PositiveVSync: false,
+	PixelBits:     16,
+}
+
 // Mode800x600RGB555 is VESA 800x600 at 60Hz driven from a 400x300 framebuffer
 // of 16 bit RGB555 pixels, the arrangement the RP2040 VGA reference design
 // wires up. See NewBase16 for why that board needs 16 bits per pixel.
