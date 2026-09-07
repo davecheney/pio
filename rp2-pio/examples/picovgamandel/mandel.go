@@ -11,13 +11,8 @@ import "github.com/tinygo-org/pio/rp2-pio/picovga"
 // six, so four integer bits are enough. That keeps every value inside sixteen
 // bits, and the product of two of them inside an int32, so the iteration needs
 // only 32 bit multiplies rather than the 64 bit ones a larger q would force.
-const (
-	q   = 12
-	one = 1 << q
-	// escape is the squared modulus at which a point is considered to have
-	// escaped, four in fixed point.
-	escape = 4 << q
-)
+// one is the fixed point scale of whichever format was selected.
+const one = 1 << q
 
 // The view is held as a centre and a width, all in fixed point.
 const (
@@ -46,34 +41,31 @@ type destination struct {
 	cx, cy int32
 }
 
-// These are chosen by how the last and closest view of each cycle actually
-// looks, not by reputation. The famous valleys and junctions are cusps where
-// two parts of the set meet, and the filaments that make them worth seeing only
-// open up thousands of times deeper than this fixed point format can reach. At
-// this depth they are a thread in a black field: seahorse valley finishes 65%
-// black, the period four junction 93% and scepter valley 94%.
+// The places the zoom heads for, given to nine decimal places.
 //
-// The places below finish between a tenth and three fifths black, which leaves
-// both structure and colour on the screen. TestDestinationsLookInteresting
-// measures exactly that and will fail if a coordinate is changed for one that
-// ends up inside the set.
+// Each is written as a count of billionths scaled by one, so the same table
+// serves either fixed point format: the wide one carries all nine digits, the
+// narrow one rounds them to its own grid, and both land on the same place.
+//
+// Precision is what makes these worth having. At the narrow format's depth,
+// about forty times, the famous valleys and junctions are a thread in a black
+// field and had to be thrown out; the wide format reaches four thousand times,
+// where their detail opens up. Seahorse valley finishes 65% black at the
+// shallow depth and 3% at the deep one.
+//
+// Every entry was measured at both depths, at the iteration limit each build
+// uses. TestDestinationsLookInteresting does that measurement and fails if a
+// coordinate is changed for one that comes out flat.
 var destinations = []destination{
-	{"mini mandelbrot", -17500 * one / 10000, 0},  // a whole small copy of the set
-	{"feigenbaum point", -14011 * one / 10000, 0}, // where the period doubling ends
-	{"period two crown", -10000 * one / 10000, 2800 * one / 10000},
-	{"elephant valley", 3000 * one / 10000, 200 * one / 10000},
-	{"misiurewicz point", -7747 * one / 10000, 1374 * one / 10000},
-	{"cusp filaments", 3550 * one / 10000, 1000 * one / 10000},
+	{"seahorse valley", -743643887 * one / 1000000000, 131825904 * one / 1000000000},
+	{"elephant valley", 292575500 * one / 1000000000, -14997700 * one / 1000000000},
+	{"misiurewicz point", -775683770 * one / 1000000000, 136467370 * one / 1000000000},
+	{"mini mandelbrot", -1749204600 * one / 1000000000, 0},
+	{"feigenbaum point", -1401155189 * one / 1000000000, 0},
+	{"north spiral", -160701350 * one / 1000000000, 1037566500 * one / 1000000000},
+	{"upper filament", -235125000 * one / 1000000000, 827215000 * one / 1000000000},
+	{"deep spiral", 1643722 * one / 1000000000, -822467633 * one / 1000000000},
 }
-
-// maxIter is the iteration limit. Raising it sharpens the set's edge and
-// lengthens the render in proportion.
-//
-// This lives here rather than beside the display loop so that the tests, which
-// run on the host and cannot see a file built only for the target, measure the
-// pictures at the limit the demo really uses. Testing at a different limit is
-// what let a destination through that renders black on hardware.
-const maxIter = 96
 
 // renderer draws the set into a framebuffer a few iterations at a time, so that
 // the work can be fitted into a display loop that must not be kept waiting.
@@ -115,7 +107,14 @@ func (r *renderer) setView(cx, cy, xSpan int32) {
 // about two units of the last fractional bit per pixel, neighbouring pixels stop
 // differing and the picture goes blocky, so this depends on how wide the
 // framebuffer is.
-func (r *renderer) minSpan() int32 { return int32(2 * r.fb.Width) }
+func (r *renderer) minSpan() int32 {
+	floor := int32(2 * r.fb.Width) // what the format can still tell apart
+	chosen := int32(homeXSpan / maxZoom)
+	if chosen > floor {
+		return chosen
+	}
+	return floor
+}
 
 // target is the place the current cycle is heading for.
 func (r *renderer) target() destination { return destinations[r.dest] }
@@ -133,32 +132,6 @@ func (r *renderer) zoom() {
 	}
 	d := r.target()
 	r.setView(r.cx+(d.cx-r.cx)/panDivisor, r.cy+(d.cy-r.cy)/panDivisor, span)
-}
-
-// mandelStep advances z by one iteration of z = z*z + c, reporting whether the
-// point had already escaped. Every value stays within sixteen bits and every
-// product within an int32, so this needs no 64 bit arithmetic.
-func mandelStep(zr, zi, cr, ci int32) (int32, int32, bool) {
-	zr2 := (zr * zr) >> q
-	zi2 := (zi * zi) >> q
-	if zr2+zi2 > escape {
-		return zr, zi, true
-	}
-	return zr2 - zi2 + cr, ((zr * zi) >> (q - 1)) + ci, false
-}
-
-// escapeCount runs a point to escape or to the limit, using exactly the
-// arithmetic the renderer uses.
-func escapeCount(cr, ci int32, maxIter int) int {
-	var zr, zi int32
-	for i := 0; i < maxIter; i++ {
-		nzr, nzi, escaped := mandelStep(zr, zi, cr, ci)
-		if escaped {
-			return i
-		}
-		zr, zi = nzr, nzi
-	}
-	return maxIter
 }
 
 // draw renders the whole picture, left to right and top to bottom.
