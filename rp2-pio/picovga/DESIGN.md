@@ -182,20 +182,11 @@ thirteen bit delay into thirty two bits, and a sixteen bit colour would leave
 five bits of delay where hundreds of cycles are needed. Layers on this hardware
 are a redesign, not a port.
 
-## Defects to fix while consolidating
+## Defects still to fix
 
-  - **Vertical sync leads the beam.** It is set from where the CPU is in the
-    frame, but the CPU runs ahead by whatever is buffered in the FIFO, up to
-    about four scanlines. The picture sits low by that much and the bottom rows
-    fall off the screen. Today it affects one demo; a shared driver would give
-    it to everyone, which is the argument for fixing it during consolidation
-    rather than after
   - **`Framebuffer` is documented as holding RGB332 colours** but its only user
     stores palette indices in it. The storage is general, the interpretation is
     not; they should be separated
-  - **`dma.go` signatures have diverged.** The row contract says `[]uint16`:
-    the length carries the transfer count and keeps alignment and lifetime
-    visible
 
 ## A rule learned the hard way
 
@@ -205,3 +196,27 @@ from that: an iteration limit that tests measured at one value and the demo used
 at another, letting four unusable destinations through; and twice a signature
 change that passed every test and failed only at `tinygo build`, because the
 file that calls it is tagged out of the host build.
+
+## Known and not worth fixing
+
+**Vertical sync leads the beam.** It is set from where the CPU has got to in the
+frame, but the CPU runs ahead by whatever is sitting in the FIFO, so the pin
+moves early: up to four scanlines at 640x480, where a blanked line is two words
+and the FIFO holds eight.
+
+Nothing reveals it. Every demo shows all four borders on the hardware to hand,
+with and without a fix in place. It was once thought to explain a bottom border
+that would not show, but that was the monitor's geometry, which it stores per
+mode and corrects on its own when asked to auto configure. The same monitor lost
+a right hand border at 800x600 for the same reason.
+
+Two remedies were considered and neither kept. Draining the FIFO on the two
+scanlines a frame where the level changes brings the lead under one scanline;
+it was written, measured and reverted, there being nothing to fix and a blocking
+wait being a poor thing to add to a driver on speculation. Driving the pin from
+PIO instead needs a second side-set bit, which shrinks the delay field from four
+bits to three and caps clocks per pixel at nine, costing 800x600 at 4x and 5x
+and 640x480 at 8x. Three legal modes is a high price for an inaccuracy no
+display has objected to.
+
+Worth revisiting only if a display does object.
