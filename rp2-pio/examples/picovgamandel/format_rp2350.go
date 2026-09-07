@@ -8,7 +8,6 @@ package main
 // inherited, and the iteration limit is raised to resolve detail at it.
 const (
 	q       = qWide
-	maxIter = 384
 	maxZoom = 4000
 )
 

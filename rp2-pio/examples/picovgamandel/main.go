@@ -49,7 +49,7 @@ func main() {
 		Height: mode.Height(),
 	}
 	fb.Fill(picovga.Black555)
-	r := newRenderer(fb, maxIter)
+	r := newRenderer(fb)
 
 	// The render has a core of its own, so it runs flat out alongside the
 	// display without either waiting for the other.

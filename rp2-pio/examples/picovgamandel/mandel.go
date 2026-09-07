@@ -39,6 +39,10 @@ const (
 type destination struct {
 	name   string // not displayed, but says what the coordinates are
 	cx, cy int32
+	// iter is the iteration limit not to exceed here. The limit climbs with
+	// the zoom, and this caps where it ends up; a place whose detail needs
+	// more than the others get says so.
+	iter int
 }
 
 // The places the zoom heads for, given to nine decimal places.
@@ -57,40 +61,65 @@ type destination struct {
 // uses. TestDestinationsLookInteresting does that measurement and fails if a
 // coordinate is changed for one that comes out flat.
 var destinations = []destination{
-	{"seahorse valley", -743643887 * one / 1000000000, 131825904 * one / 1000000000},
-	{"elephant valley", 292575500 * one / 1000000000, -14997700 * one / 1000000000},
-	{"misiurewicz point", -775683770 * one / 1000000000, 136467370 * one / 1000000000},
-	{"mini mandelbrot", -1749204600 * one / 1000000000, 0},
-	{"feigenbaum point", -1401155189 * one / 1000000000, 0},
-	{"north spiral", -160701350 * one / 1000000000, 1037566500 * one / 1000000000},
-	{"upper filament", -235125000 * one / 1000000000, 827215000 * one / 1000000000},
-	{"deep spiral", 1643722 * one / 1000000000, -822467633 * one / 1000000000},
+	{"mini mandelbrot", -1749204600 * one / 1000000000, 0, 256},
+	{"misiurewicz point", -775683770 * one / 1000000000, 136467370 * one / 1000000000, 256},
+	{"feigenbaum point", -1401155189 * one / 1000000000, 0, 384},
+	{"north spiral", -160701350 * one / 1000000000, 1037566500 * one / 1000000000, 256},
+	{"upper filament", -235125000 * one / 1000000000, 827215000 * one / 1000000000, 256},
+	{"deep spiral", 1643722 * one / 1000000000, -822467633 * one / 1000000000, 256},
+	{"elephant valley", 292575500 * one / 1000000000, -14997700 * one / 1000000000, 256},
+	{"seahorse valley", -743643887 * one / 1000000000, 131825904 * one / 1000000000, 256},
 }
+
+// The iteration limit follows the zoom. Measured against these destinations,
+// thirty two iterations are enough to draw the whole set, forty eight still
+// suffice at a hundred times, and four thousand times needs a hundred and
+// sixty. Little detail waits to be resolved early in a cycle, so holding the
+// deepest limit throughout would spend most of a cycle's time on nothing.
+//
+// The limit is quadratic in the number of zooms taken, which is itself the
+// logarithm of the depth, and lands at about twice what was measured to be
+// necessary. At the narrow format's limit it comes to about ninety, which is
+// what that build used as a fixed value before.
+const (
+	iterBase   = 48
+	iterSpread = 70
+)
 
 // renderer draws the set into a framebuffer a few iterations at a time, so that
 // the work can be fitted into a display loop that must not be kept waiting.
 type renderer struct {
-	fb      *picovga.Framebuffer16
-	maxIter int
+	fb *picovga.Framebuffer16
 
 	// The region being drawn: a centre, a width, and the derived top left
 	// corner and height.
 	cx, cy, xSpan, ySpan int32
 	xMin, yMin           int32
 
-	// dest is the destination the current cycle is heading for.
-	dest int
+	// dest is the destination the current cycle is heading for, and step how
+	// many zooms have been taken towards it.
+	dest, step int
 }
 
-func newRenderer(fb *picovga.Framebuffer16, maxIter int) *renderer {
-	r := &renderer{fb: fb, maxIter: maxIter}
+func newRenderer(fb *picovga.Framebuffer16) *renderer {
+	r := &renderer{fb: fb}
 	r.home()
 	return r
 }
 
 // home returns the view to the whole set.
 func (r *renderer) home() {
+	r.step = 0
 	r.setView(homeX, homeY, homeXSpan)
+}
+
+// iterFor is the iteration limit for the view now in frame.
+func (r *renderer) iterFor() int {
+	n := iterBase + r.step*r.step/iterSpread
+	if cap := r.target().iter; n > cap {
+		return cap
+	}
+	return n
 }
 
 // setView frames a region of the given width about a centre.
@@ -131,6 +160,7 @@ func (r *renderer) zoom() {
 		return
 	}
 	d := r.target()
+	r.step++
 	r.setView(r.cx+(d.cx-r.cx)/panDivisor, r.cy+(d.cy-r.cy)/panDivisor, span)
 }
 
@@ -141,11 +171,12 @@ func (r *renderer) zoom() {
 // is filling it in, with no locking between them, so the picture is watched
 // being painted; a half drawn frame is the worst that can be seen.
 func (r *renderer) draw() {
+	iter := r.iterFor()
 	for py := 0; py < r.fb.Height; py++ {
 		ci := r.yMin + int32(int64(py)*int64(r.ySpan)/int64(r.fb.Height))
 		for px := 0; px < r.fb.Width; px++ {
 			cr := r.xMin + int32(int64(px)*int64(r.xSpan)/int64(r.fb.Width))
-			r.fb.SetPixel(px, py, palette(escapeCount(cr, ci, r.maxIter), r.maxIter))
+			r.fb.SetPixel(px, py, palette(escapeCount(cr, ci, iter), iter))
 		}
 	}
 }

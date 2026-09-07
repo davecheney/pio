@@ -201,12 +201,12 @@ func TestNarrowAgainstFloat(t *testing.T) {
 // destination i, which is the one most likely to have closed in on solid black.
 func finalView(t *testing.T, fb *picovga.Framebuffer16, i int) *renderer {
 	t.Helper()
-	r := newRenderer(fb, maxIter)
+	r := newRenderer(fb)
 	r.dest = i
-	cx, cy, span := r.cx, r.cy, r.xSpan
+	cx, cy, span, step := r.cx, r.cy, r.xSpan, r.step
 	for n := 0; ; n++ {
 		was := r.dest
-		cx, cy, span = r.cx, r.cy, r.xSpan
+		cx, cy, span, step = r.cx, r.cy, r.xSpan, r.step
 		r.zoom()
 		if r.dest != was {
 			break
@@ -215,8 +215,12 @@ func finalView(t *testing.T, fb *picovga.Framebuffer16, i int) *renderer {
 			t.Fatalf("destination %d: cycle never reached its zoom limit", i)
 		}
 	}
+	// Ending the cycle sent the renderer home, which reset the zoom count. The
+	// iteration limit is derived from that count, so restoring the view without
+	// it would draw the closest picture at the opening picture's limit.
 	r.dest = i
 	r.setView(cx, cy, span)
+	r.step = step
 	return r
 }
 
@@ -258,7 +262,7 @@ func TestDestinationsLookInteresting(t *testing.T) {
 // list wraps round.
 func TestZoomCyclesDestinations(t *testing.T) {
 	fb := picovga.NewFramebuffer16(160, 120)
-	r := newRenderer(fb, 16)
+	r := newRenderer(fb)
 	visited := []int{r.dest}
 	for range destinations {
 		for i := 0; ; i++ {

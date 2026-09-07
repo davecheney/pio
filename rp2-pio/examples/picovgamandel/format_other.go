@@ -7,7 +7,6 @@ package main
 // target.
 const (
 	q       = qWide
-	maxIter = 384
 	maxZoom = 4000
 )
 
