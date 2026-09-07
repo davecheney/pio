@@ -1,6 +1,4 @@
-package main
-
-import "github.com/tinygo-org/pio/rp2-pio/picovga"
+package mandel
 
 // The set is iterated in fixed point. The RP2040 has no floating point unit, so
 // software floats would cost hundreds of cycles an iteration, and a picture of
@@ -86,10 +84,18 @@ const (
 	iterSpread = 70
 )
 
-// renderer draws the set into a framebuffer a few iterations at a time, so that
-// the work can be fitted into a display loop that must not be kept waiting.
-type renderer struct {
-	fb *picovga.Framebuffer16
+// Painter receives each pixel as the picture is drawn: where it is, how many
+// iterations it took to escape, and the limit it was drawn at. What a pixel is
+// stored as is the caller's business, which is what lets one renderer serve a
+// framebuffer of colours and a framebuffer of palette indices.
+type Painter interface {
+	Paint(x, y, iter, maxIter int)
+}
+
+// Renderer draws the Mandelbrot set, zooming from one place to the next.
+type Renderer struct {
+	w, h int
+	p    Painter
 
 	// The region being drawn: a centre, a width, and the derived top left
 	// corner and height.
@@ -101,20 +107,21 @@ type renderer struct {
 	dest, step int
 }
 
-func newRenderer(fb *picovga.Framebuffer16) *renderer {
-	r := &renderer{fb: fb}
+// New returns a renderer drawing a picture w by h pixels into p.
+func New(w, h int, p Painter) *Renderer {
+	r := &Renderer{w: w, h: h, p: p}
 	r.home()
 	return r
 }
 
 // home returns the view to the whole set.
-func (r *renderer) home() {
+func (r *Renderer) home() {
 	r.step = 0
 	r.setView(homeX, homeY, homeXSpan)
 }
 
 // iterFor is the iteration limit for the view now in frame.
-func (r *renderer) iterFor() int {
+func (r *Renderer) iterFor() int {
 	n := iterBase + r.step*r.step/iterSpread
 	if cap := r.target().iter; n > cap {
 		return cap
@@ -123,11 +130,11 @@ func (r *renderer) iterFor() int {
 }
 
 // setView frames a region of the given width about a centre.
-func (r *renderer) setView(cx, cy, xSpan int32) {
+func (r *Renderer) setView(cx, cy, xSpan int32) {
 	r.cx, r.cy, r.xSpan = cx, cy, xSpan
 	// Framebuffer pixels are square on screen, so the vertical span follows the
 	// framebuffer's shape.
-	r.ySpan = int32(int64(xSpan) * int64(r.fb.Height) / int64(r.fb.Width))
+	r.ySpan = int32(int64(xSpan) * int64(r.h) / int64(r.w))
 	r.xMin = cx - xSpan/2
 	r.yMin = cy - r.ySpan/2
 }
@@ -136,8 +143,8 @@ func (r *renderer) setView(cx, cy, xSpan int32) {
 // about two units of the last fractional bit per pixel, neighbouring pixels stop
 // differing and the picture goes blocky, so this depends on how wide the
 // framebuffer is.
-func (r *renderer) minSpan() int32 {
-	floor := int32(2 * r.fb.Width) // what the format can still tell apart
+func (r *Renderer) minSpan() int32 {
+	floor := int32(2 * r.w) // what the format can still tell apart
 	chosen := int32(homeXSpan / maxZoom)
 	if chosen > floor {
 		return chosen
@@ -146,13 +153,15 @@ func (r *renderer) minSpan() int32 {
 }
 
 // target is the place the current cycle is heading for.
-func (r *renderer) target() destination { return destinations[r.dest] }
+func (r *Renderer) target() destination { return destinations[r.dest] }
 
 // zoom narrows the view a little and eases its centre towards the current
 // destination. Once the fixed point values can no longer tell neighbouring
 // pixels apart the cycle ends, and the next one starts from the whole set again
 // and heads somewhere else.
-func (r *renderer) zoom() {
+// Zoom narrows the view towards the current destination, moving on to the next
+// place once it can go no closer.
+func (r *Renderer) Zoom() {
 	span := int32(int64(r.xSpan) * zoomNum / zoomDen)
 	if span < r.minSpan() || span == r.xSpan {
 		r.dest = (r.dest + 1) % len(destinations)
@@ -170,31 +179,14 @@ func (r *renderer) zoom() {
 // happen and needs no dividing up. The display reads the framebuffer while this
 // is filling it in, with no locking between them, so the picture is watched
 // being painted; a half drawn frame is the worst that can be seen.
-func (r *renderer) draw() {
+// Draw renders the whole picture.
+func (r *Renderer) Draw() {
 	iter := r.iterFor()
-	for py := 0; py < r.fb.Height; py++ {
-		ci := r.yMin + int32(int64(py)*int64(r.ySpan)/int64(r.fb.Height))
-		for px := 0; px < r.fb.Width; px++ {
-			cr := r.xMin + int32(int64(px)*int64(r.xSpan)/int64(r.fb.Width))
-			r.fb.SetPixel(px, py, palette(escapeCount(cr, ci, iter), iter))
+	for py := 0; py < r.h; py++ {
+		ci := r.yMin + int32(int64(py)*int64(r.ySpan)/int64(r.h))
+		for px := 0; px < r.w; px++ {
+			cr := r.xMin + int32(int64(px)*int64(r.xSpan)/int64(r.w))
+			r.p.Paint(px, py, escapeCount(cr, ci, iter), iter)
 		}
-	}
-}
-
-// palette maps an escape count to a colour. Points that never escape are left
-// black, and the rest cycle through a ramp so that the bands stay distinct
-// however high the count goes.
-func palette(iter, maxIter int) picovga.Colour {
-	if iter >= maxIter {
-		return picovga.Black555
-	}
-	v := uint8(iter & 31)
-	switch (iter >> 5) % 3 {
-	case 0:
-		return picovga.RGB555(v, 0, 31-v)
-	case 1:
-		return picovga.RGB555(31-v, v, 0)
-	default:
-		return picovga.RGB555(0, 31-v, v)
 	}
 }

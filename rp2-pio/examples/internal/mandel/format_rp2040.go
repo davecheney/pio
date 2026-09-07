@@ -1,6 +1,6 @@
 //go:build rp2040
 
-package main
+package mandel
 
 // The RP2040's core has no wide multiply, so it uses the narrow format and the
 // shallow zoom that goes with it, and the iteration limit that suits that depth.

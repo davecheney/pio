@@ -1,11 +1,45 @@
-package main
+package mandel
 
 import (
 	"math"
 	"testing"
-
-	"github.com/tinygo-org/pio/rp2-pio/picovga"
 )
+
+// counts records escape counts, so a test can look at a picture without a
+// framebuffer or a colour scheme.
+type counts struct {
+	w, h int
+	iter []int
+	max  int
+}
+
+func newCounts(w, h int) *counts { return &counts{w: w, h: h, iter: make([]int, w*h)} }
+
+func (c *counts) Paint(x, y, iter, maxIter int) {
+	c.iter[y*c.w+x] = iter
+	c.max = maxIter
+}
+
+// inSet is how many pixels never escaped, which is what is drawn black.
+func (c *counts) inSet() int {
+	n := 0
+	for _, v := range c.iter {
+		if v >= c.max {
+			n++
+		}
+	}
+	return n
+}
+
+// distinct is how many different escape counts appear, which stands for how
+// much structure a picture has.
+func (c *counts) distinct() int {
+	seen := map[int]bool{}
+	for _, v := range c.iter {
+		seen[v] = true
+	}
+	return len(seen)
+}
 
 // referenceCount iterates the set in floating point, which the target cannot
 // afford but a test can, to check the fixed point arithmetic against.
@@ -199,15 +233,15 @@ func TestNarrowAgainstFloat(t *testing.T) {
 
 // finalView returns the last and closest view of the cycle heading for
 // destination i, which is the one most likely to have closed in on solid black.
-func finalView(t *testing.T, fb *picovga.Framebuffer16, i int) *renderer {
+func finalView(t *testing.T, w, h int, p Painter, i int) *Renderer {
 	t.Helper()
-	r := newRenderer(fb)
+	r := New(w, h, p)
 	r.dest = i
 	cx, cy, span, step := r.cx, r.cy, r.xSpan, r.step
 	for n := 0; ; n++ {
 		was := r.dest
 		cx, cy, span, step = r.cx, r.cy, r.xSpan, r.step
-		r.zoom()
+		r.Zoom()
 		if r.dest != was {
 			break
 		}
@@ -237,37 +271,28 @@ func finalView(t *testing.T, fb *picovga.Framebuffer16, i int) *renderer {
 // late as exterior, and passed destinations that come out black on hardware.
 func TestDestinationsLookInteresting(t *testing.T) {
 	for i, d := range destinations {
-		fb := picovga.NewFramebuffer16(160, 120)
-		r := finalView(t, fb, i)
-		r.draw()
-		black, seen := 0, map[uint16]bool{}
-		for _, p := range fb.Pix {
-			if p == 0 {
-				black++
-			}
-			seen[p] = true
-		}
-		pct := 100 * float64(black) / float64(len(fb.Pix))
+		c := newCounts(160, 120)
+		r := finalView(t, 160, 120, c, i)
+		r.Draw()
+		pct := 100 * float64(c.inSet()) / float64(len(c.iter))
 		if pct > 90 {
-			t.Errorf("%s: closest view is %.1f%% black, nothing left to look at", d.name, pct)
+			t.Errorf("%s: closest view is %.1f%% inside the set, nothing left to look at", d.name, pct)
 		}
-		if len(seen) < 20 {
-			t.Errorf("%s: closest view uses only %d colours", d.name, len(seen))
+		if n := c.distinct(); n < 20 {
+			t.Errorf("%s: closest view has only %d different escape counts", d.name, n)
 		}
-		t.Logf("%-20s %5.1f%% black, %3d colours", d.name, pct, len(seen))
+		t.Logf("%-20s %5.1f%% in set, %3d escape counts", d.name, pct, c.distinct())
 	}
 }
 
-// TestZoomCyclesDestinations checks each cycle heads somewhere new and that the
-// list wraps round.
 func TestZoomCyclesDestinations(t *testing.T) {
-	fb := picovga.NewFramebuffer16(160, 120)
-	r := newRenderer(fb)
+	c := newCounts(160, 120)
+	r := New(160, 120, c)
 	visited := []int{r.dest}
 	for range destinations {
 		for i := 0; ; i++ {
 			was := r.dest
-			r.zoom()
+			r.Zoom()
 			if r.dest != was {
 				visited = append(visited, r.dest)
 				break
@@ -297,5 +322,105 @@ func TestDestinationsNamed(t *testing.T) {
 			t.Errorf("duplicate destination %q", d.name)
 		}
 		seen[d.name] = true
+	}
+}
+
+func abs32(v int32) int32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// TestDestinationsInHomeView checks every destination is somewhere the zoom can
+// actually set off towards, rather than off the edge of the opening picture.
+func TestDestinationsInHomeView(t *testing.T) {
+	r := New(160, 120, newCounts(160, 120))
+	xLo, xHi := r.xMin, r.xMin+r.xSpan
+	yLo, yHi := r.yMin, r.yMin+r.ySpan
+	for _, d := range destinations {
+		if d.cx < xLo || d.cx > xHi || d.cy < yLo || d.cy > yHi {
+			t.Errorf("%s (%.4f,%.4f) lies outside the home view x[%.3f,%.3f] y[%.3f,%.3f]",
+				d.name, float64(d.cx)/one, float64(d.cy)/one,
+				float64(xLo)/one, float64(xHi)/one, float64(yLo)/one, float64(yHi)/one)
+		}
+	}
+}
+
+// TestRenderFillsFramebuffer checks a whole picture gets drawn, and that the
+// opening view has a substantial interior and a substantial exterior.
+func TestRenderFillsFramebuffer(t *testing.T) {
+	c := newCounts(64, 48)
+	New(64, 48, c).Draw()
+	in := c.inSet()
+	out := len(c.iter) - in
+	if in < 100 || out < 100 {
+		t.Errorf("picture looks wrong: %d pixels in the set, %d outside", in, out)
+	}
+}
+
+// TestZoomResets checks the view returns to the whole set rather than zooming
+// past what the fixed point format can resolve.
+func TestZoomResets(t *testing.T) {
+	r := New(160, 120, newCounts(160, 120))
+	start := r.xSpan
+	zoomed := false
+	for i := 0; i < 500; i++ {
+		r.Zoom()
+		if r.xSpan < r.minSpan() {
+			t.Fatalf("zoomed to a span of %d, past the %d limit", r.xSpan, r.minSpan())
+		}
+		if r.xSpan < start {
+			zoomed = true
+		}
+		if r.xSpan == start && zoomed {
+			return // came home
+		}
+	}
+	t.Error("zoom never returned to the whole set")
+}
+
+// TestZoomApproachesTarget checks the view closes in on the destination.
+//
+// It did not once: setView pinned the vertical centre to zero and ignored the
+// destination's imaginary part, so the zoom ran towards a point on the real
+// axis instead. Constants may go unused without complaint, so nothing else
+// caught it.
+func TestZoomApproachesTarget(t *testing.T) {
+	r := New(160, 120, newCounts(160, 120))
+	// Head for a destination off the real axis: one on it would be reached even
+	// by a zoom that ignored the imaginary part, which is the fault this is
+	// watching for.
+	for i, c := range destinations {
+		if c.cy != 0 {
+			r.dest = i
+			break
+		}
+	}
+	d := r.target()
+	span, dx, dy := r.xSpan, abs32(r.cx-d.cx), abs32(r.cy-d.cy)
+	if dy == 0 {
+		t.Fatal("no destination lies off the real axis, so this cannot test the vertical pan")
+	}
+	startDY, dest := dy, r.dest
+	for i := 0; i < 24; i++ {
+		r.Zoom()
+		if r.dest != dest {
+			t.Fatalf("step %d: cycle ended sooner than expected", i)
+		}
+		if r.xSpan >= span {
+			t.Fatalf("step %d: span went from %d to %d, wanted it to narrow", i, span, r.xSpan)
+		}
+		ndx, ndy := abs32(r.cx-d.cx), abs32(r.cy-d.cy)
+		if ndx > dx || ndy > dy {
+			t.Fatalf("step %d: centre moved away from %s", i, d.name)
+		}
+		span, dx, dy = r.xSpan, ndx, ndy
+	}
+	if r.cy == 0 {
+		t.Error("the centre's imaginary part never left zero")
+	}
+	if dy*4 > startDY {
+		t.Errorf("centre is still %d from %s vertically, expected it much closer", dy, d.name)
 	}
 }

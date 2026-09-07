@@ -82,3 +82,38 @@ func TestMode640x480Scale4(t *testing.T) {
 	}
 	t.Logf("%d bytes a frame against %d, %.0f%% less", small, large, 100*(1-float64(small)/float64(large)))
 }
+
+// TestMode640x480FrameWalk walks a frame and checks its vertical structure.
+// This moved here from the picovga480 example when that stopped keeping its own
+// copy of these timings.
+func TestMode640x480FrameWalk(t *testing.T) {
+	m := Mode640x480RGB555
+	rows := make([]int, m.Height())
+	sync, visible, cycles := 0, 0, 0
+	for line := 0; line < m.VTotal(); line++ {
+		if m.InVSync(line) {
+			sync++
+		}
+		if row, ok := m.VisibleLine(line); ok {
+			visible++
+			rows[row]++
+			cycles += m.VisibleLineCycles()
+		} else {
+			cycles += m.BlankLineCycles()
+		}
+	}
+	if sync != m.VSync {
+		t.Errorf("vertical sync asserted for %d lines, want %d", sync, m.VSync)
+	}
+	if visible != m.VVisible {
+		t.Errorf("%d visible lines, want %d", visible, m.VVisible)
+	}
+	for row, n := range rows {
+		if n != m.VScale {
+			t.Fatalf("row %d shown %d times, want %d", row, n, m.VScale)
+		}
+	}
+	if want := m.VTotal() * m.LineCycles(); cycles != want {
+		t.Errorf("frame = %d cycles, want %d", cycles, want)
+	}
+}

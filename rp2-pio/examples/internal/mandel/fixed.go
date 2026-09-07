@@ -1,4 +1,4 @@
-package main
+package mandel
 
 // The set is iterated in fixed point. Software floating point would cost
 // hundreds of cycles an iteration and a picture needs millions of them, and

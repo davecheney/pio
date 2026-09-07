@@ -22,21 +22,27 @@ import (
 )
 
 func main() {
-	mode := picovga.Mode800x600RGB555
-	mode.HScale, mode.VScale = scale, scale
-	fb := &picovga.Framebuffer16{
-		Pix:    pixels[:],
-		Width:  mode.Width(),
-		Height: mode.Height(),
-	}
-	draw(fb)
-
-	vga, err := picovga.NewVGA(picovga.PimoroniVGA, mode, fb)
+	d, err := picovga.New(picovga.PimoroniVGA, picovga.Mode800x600RGB555.Scaled(scale, scale))
 	if err != nil {
 		panic(err)
 	}
-	vga.Start()
-	vga.Run()
+	if d.Width() != fbWidth || d.Height() != fbHeight {
+		panic("framebuffer does not match the display")
+	}
+
+	fb := &picovga.Framebuffer16{Pix: pixels[:], Width: fbWidth, Height: fbHeight}
+	draw(fb)
+
+	d.Start()
+	for {
+		for n := 0; n < d.Scanlines(); n++ {
+			var px []uint16
+			if row, ok := d.Row(n); ok {
+				px = fb.Line(row)
+			}
+			d.Scanline(n, px)
+		}
+	}
 }
 
 // draw paints a test pattern: colour bars, a grey ramp, and colour ramps for

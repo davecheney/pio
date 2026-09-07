@@ -83,24 +83,6 @@ var PimoroniVGA = Config{
 	SkipColourPins: 1 << 5,
 }
 
-// VGA drives a framebuffer to a VGA display using the base program and one DMA
-// channel. The CPU issues a few control words per scanline and DMA streams the
-// pixels, so the picture costs the processor very little.
-type VGA struct {
-	mode Mode
-	fb   *Framebuffer16
-	sm   pio.StateMachine
-	dma  dmaChannel
-	ctrl uint32
-	txf  *volatile.Register32
-
-	vsync    machine.Pin
-	vsyncPol bool
-
-	sync, back, output, front uint32
-	blank                     []uint32
-}
-
 // Setup claims a state machine, loads the 16 bit base program and configures
 // the pins and clock for the mode, leaving it disabled.
 //
@@ -163,87 +145,4 @@ func Setup(cfg Config, m Mode) (pio.StateMachine, error) {
 	smcfg.SetClkDivIntFrac(whole, frac)
 	sm.Init(offset+prog.Entry, smcfg)
 	return sm, nil
-}
-
-// NewVGA prepares the state machine, pins and DMA channel to display fb in the
-// given mode. Call Start to begin output.
-func NewVGA(cfg Config, m Mode, fb *Framebuffer16) (*VGA, error) {
-	if fb.Width != m.Width() || fb.Height != m.Height() {
-		return nil, ErrFramebufferSize
-	}
-	if len(fb.Pix) < fb.Width*fb.Height || fb.Width%2 != 0 {
-		return nil, ErrFramebufferSize
-	}
-	if cfg.DMAChannel >= numDMAChannels {
-		return nil, ErrDMAChannel
-	}
-	sm, err := Setup(cfg, m)
-	if err != nil {
-		return nil, err
-	}
-
-	dma := dmaChannelAt(cfg.DMAChannel)
-	v := &VGA{
-		mode:     m,
-		fb:       fb,
-		sm:       sm,
-		dma:      dma,
-		ctrl:     dma.ctrl(txDREQ(sm)),
-		txf:      sm.TxReg(),
-		vsync:    cfg.VSync,
-		vsyncPol: m.PositiveVSync,
-		sync:     m.SyncWord(),
-		back:     m.BackPorchWord(),
-		output:   m.OutputWord(),
-		front:    m.FrontPorchWord(),
-		blank:    m.BlankWords(),
-	}
-	return v, nil
-}
-
-// Start enables the state machine. Run must be called promptly afterwards, as
-// the state machine stalls until it is given control words.
-func (v *VGA) Start() {
-	v.sm.SetEnabled(true)
-}
-
-// Framebuffer returns the framebuffer being displayed.
-func (v *VGA) Framebuffer() *Framebuffer16 { return v.fb }
-
-// put writes one control word, waiting for room in the FIFO.
-func (v *VGA) put(w uint32) {
-	for v.sm.IsTxFIFOFull() {
-	}
-	v.sm.TxPut(w)
-}
-
-// Frame outputs one complete frame, returning after the last scanline.
-func (v *VGA) Frame() {
-	m := v.mode
-	for line := 0; line < m.VTotal(); line++ {
-		v.vsync.Set(m.InVSync(line) == v.vsyncPol)
-		row, visible := m.VisibleLine(line)
-		if !visible {
-			v.put(v.sync)
-			for _, w := range v.blank {
-				v.put(w)
-			}
-			continue
-		}
-		v.put(v.sync)
-		v.put(v.back)
-		v.put(v.output)
-		// The pixels must reach the FIFO after the output command and before
-		// the front porch, so the transfer is started here and waited for.
-		v.dma.startPixels(v.txf, v.fb.Line(row), v.ctrl)
-		v.dma.wait()
-		v.put(v.front)
-	}
-}
-
-// Run outputs frames forever.
-func (v *VGA) Run() {
-	for {
-		v.Frame()
-	}
 }

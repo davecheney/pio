@@ -1,6 +1,6 @@
 //go:build rp2350
 
-package main
+package mandel
 
 // The RP2350's core multiplies 32 bits by 32 into 64 in one instruction, so it
 // uses the wide format. Sixteen more fractional bits put the zoom limit far
