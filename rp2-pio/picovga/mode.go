@@ -333,3 +333,10 @@ func (m Mode) FlatLineWords(colours []Colour) []uint32 {
 func (m Mode) BlankLineWords() []uint32 {
 	return append([]uint32{m.SyncWord()}, m.BlankWords()...)
 }
+
+// Scaled returns the mode with its scale factors set, leaving the original
+// alone. A framebuffer pixel then covers h screen pixels across and v down.
+func (m Mode) Scaled(h, v int) Mode {
+	m.HScale, m.VScale = h, v
+	return m
+}
