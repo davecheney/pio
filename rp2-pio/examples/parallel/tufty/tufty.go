@@ -10,22 +10,6 @@ import (
 	"github.com/tinygo-org/pio/rp2-pio/piolib"
 )
 
-// busBaud controls the PIO parallel bus clock rate driving WR.
-//
-// The parallel PIO program in piolib is three instructions long, so the PIO
-// state machine clock runs at 3 * busBaud. The ST7789 8080-II parallel
-// interface specifies a minimum write cycle of 66 ns (~15.15 MHz), and
-// 15 MHz has been verified visually clean on a Tufty 2040 panel — we run
-// right at the datasheet ceiling because the bouncing-rect demo is
-// bus-limited and the extra ~9% throughput is worth having. Measured on
-// hardware: ~37 FPS @ 12.5 MHz, ~42 FPS @ 15 MHz with a full 320x240x16bpp
-// framebuffer transfer every frame.
-//
-// At the RP2350 default 150 MHz sysclk, piolib's 8-bit fractional divider
-// produces a 15.006 MHz WR rate (66.64 ns write cycle), which remains within
-// the ST7789 8080-II timing limit.
-const busBaud = 15_000_000
-
 // Compile-time assertion that ST7789 satisfies our local Displayer contract.
 // The signatures match tinygo.org/x/drivers.Displayer byte-for-byte so
 // downstream code can substitute that interface without changes here.

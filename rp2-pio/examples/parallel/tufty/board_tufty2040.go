@@ -15,6 +15,14 @@ const (
 	blPin  = machine.GPIO2  // LCD_BACKLIGHT
 )
 
+// busBaud controls the PIO parallel bus clock rate driving WR.
+//
+// The parallel PIO program in piolib is three instructions long, so the PIO
+// state machine clock runs at 3 * busBaud. The ST7789 8080-II parallel
+// interface specifies a minimum write cycle of 66 ns (~15.15 MHz), and
+// 15 MHz has been verified visually clean on a Tufty 2040 panel.
+const busBaud = 15_000_000
+
 func configureBacklight(pin machine.Pin, on bool) error {
 	return configureBacklightPWM(machine.PWM1, pin, on)
 }
