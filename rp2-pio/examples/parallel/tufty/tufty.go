@@ -10,16 +10,6 @@ import (
 	"github.com/tinygo-org/pio/rp2-pio/piolib"
 )
 
-// Pimoroni Tufty definitions https://tinygo.org/docs/reference/microcontrollers/tufty2040/
-const (
-	csPin  = machine.GPIO10 // LCD_CS
-	dcPin  = machine.GPIO11 // LCD_DC
-	wrPin  = machine.GPIO12 // LCD_WR
-	db0Pin = machine.GPIO14 // LCD_DB0..DB7 = GPIO14..GPIO21
-	rdPin  = machine.GPIO13 // LCD_RD
-	blPin  = machine.GPIO2  // LCD_BACKLIGHT
-)
-
 // busBaud controls the PIO parallel bus clock rate driving WR.
 //
 // The parallel PIO program in piolib is three instructions long, so the PIO
@@ -30,6 +20,10 @@ const (
 // bus-limited and the extra ~9% throughput is worth having. Measured on
 // hardware: ~37 FPS @ 12.5 MHz, ~42 FPS @ 15 MHz with a full 320x240x16bpp
 // framebuffer transfer every frame.
+//
+// At the RP2350 default 150 MHz sysclk, piolib's 8-bit fractional divider
+// produces a 15.006 MHz WR rate (66.64 ns write cycle), which remains within
+// the ST7789 8080-II timing limit.
 const busBaud = 15_000_000
 
 // Compile-time assertion that ST7789 satisfies our local Displayer contract.
