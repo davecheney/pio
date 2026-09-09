@@ -160,7 +160,7 @@ func initDisplay() {
 	command(0xe5, 0xe4)
 
 	command(cmdCND2BKxSEL, 0x77, 0x01, 0x00, 0x00, 0x00)
-	command(cmdCOLMOD, 0x55)
+	command(cmdCOLMOD, 0x66)
 	command(0x21)
 	time.Sleep(time.Millisecond)
 	command(cmdSLPOUT)
@@ -268,11 +268,12 @@ func setClkDiv(cfg *pio.StateMachineConfig, hz uint32) {
 
 func scanFrame(timingSM, dataSM pio.StateMachine, frame uint32) {
 	for row := 0; row < timingVFront; row++ {
+		vsyncHigh := row >= timingVPulse
 		active := row >= timingVBack && row < timingVDisplay
 		sourceRow := (row - timingVBack) / 2
 
-		putTiming(timingSM, true, true, timingHFront, pioNop)
-		putTiming(timingSM, false, true, timingHPulse, pioNop)
+		putTiming(timingSM, true, vsyncHigh, timingHFront, pioNop)
+		putTiming(timingSM, false, vsyncHigh, timingHPulse, pioNop)
 
 		if active {
 			expandScanline(sourceRow, frame)
@@ -283,8 +284,8 @@ func scanFrame(timingSM, dataSM pio.StateMachine, frame uint32) {
 		if active {
 			instr = pioIRQ4
 		}
-		putTiming(timingSM, true, true, timingHBack, instr)
-		putTiming(timingSM, true, true, timingHDisplay, pioNop)
+		putTiming(timingSM, true, vsyncHigh, timingHBack, instr)
+		putTiming(timingSM, true, vsyncHigh, timingHDisplay, pioNop)
 
 		if active {
 			waitLineDMA()
