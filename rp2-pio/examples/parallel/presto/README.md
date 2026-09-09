@@ -1,7 +1,8 @@
 # Pimoroni Presto ST7701 display example
 
 This example drives the built-in 4 inch 480 x 480 IPS LCD on the Pimoroni
-Presto using RP2350 PIO. It is intentionally self-contained: Presto's display
+Presto using RP2350 PIO, rendering an animated plasma at the panel's full
+resolution and refresh rate. It is intentionally self-contained: Presto's display
 is an RGB/DPI-style panel and is not compatible with the existing `piolib`
 8080-style `Parallel` helper, so the example carries only the PIO programs and
 minimal DMA setup needed for scanout.
@@ -115,36 +116,49 @@ refresh: only the leading fraction of each frame is ever drawn, stretched
 vertically over the whole screen. An earlier revision of this example ran the
 timing state machine at 8 MHz (15.15 Hz) and showed exactly that, with about
 the top third of the pattern stretched over the full panel and the bottom
-border and bottom corner markers never appearing at all.
+border never appearing at all.
 
-## Framebuffer strategy
+## What it draws
+
+The demo is an animated full-screen plasma: three sine waves, one moving
+vertically, one horizontally and one diagonally, summed into a byte that
+indexes a wrapping rainbow palette. A two pixel white border is drawn around
+it, which is a cheap ongoing check that the full panel really is being
+scanned.
+
+The sine phases are computed from full pixel coordinates and truncated to a
+byte only at the point of indexing. Truncating earlier, before the diagonal
+term's shift, leaves clearly visible seams every 256 pixels.
+
+## Rendering strategy
 
 A full 480 x 480 RGB565 framebuffer is 450 KiB, too large to keep in RAM
 alongside a small standalone TinyGo example with no PSRAM setup. Because the
 ST7701S in this configuration has no persistent GRAM (the panel must be
 continuously, actively re-scanned or the image is lost), every one of the 480
-active lines has to be supplied on every frame, roughly 42 us apart. That is
-far too little time to evaluate the pattern per-pixel on the fly.
+active lines has to be produced on every frame, roughly 42 us apart. At
+150 MHz that is about 13 CPU cycles per pixel, so the renderer is built around
+that budget rather than around a framebuffer:
 
-Instead the example exploits the fact that its test pattern contains only four
-distinct scanlines: an all-white row (used for both the border rows and the
-crosshair's horizontal arm), a row through the top corner markers, a row
-through the bottom corner markers, and a plain colour-bar row carrying the
-crosshair's vertical stem. All four are rendered once at startup by
-`buildLines` into 3840 bytes of RAM, and each active row simply points its DMA
-at the right one via `lineKind`. This keeps per-line CPU work to a handful of
-comparisons and register writes, while costing less than 1% of the RAM a full
-framebuffer would need.
+- Two line buffers are ping-ponged, so one line is rendered while the previous
+  one is being clocked out to the panel by DMA.
+- The plasma is sampled once every four pixels. On a smooth gradient this is
+  visually indistinguishable from full resolution and cuts the per-line work
+  by a factor of four.
+- The sine table and the palette are built once at startup. The palette does
+  not hold colours but the finished, channel-ordered 32-bit words the PIO
+  expects for a pair of identical adjacent pixels, so the inner loop is two
+  table lookups, an add and two stores, with no colour conversion at all.
+- The first visible line of each frame is rendered during vertical blanking,
+  where there is a full line of slack.
+- The loop only ever blocks on a full timing FIFO. That FIFO is 8 words, or
+  two rows, and is what paces the whole loop, so it also sets the budget: any
+  other stall longer than two rows starves the timing state machine and
+  stretches a sync period. The line DMA is therefore waited on one row after
+  it is started, not immediately, which halves the longest stall.
 
-The test pattern draws, from outermost to innermost:
-
-- a white border spanning the full screen (checks dimensions/full-screen
-  scanout)
-- four differently coloured corner squares, one per corner (checks
-  orientation/rotation)
-- a centre crosshair (checks the exact centre lands where expected)
-- eight vertical colour bars in a fixed, known order (checks RGB565 colour
-  channel wiring)
+Total cost is under 3.2 KiB of RAM, less than 1% of what a full framebuffer
+would need.
 
 ## Pixel pipeline and channel mapping
 
@@ -189,14 +203,23 @@ tinygo flash -target pico-plus2 ./rp2-pio/examples/parallel/presto
 
 Hardware-verified on a physical Pimoroni Presto, flashed via
 `-target pico-plus2` with TinyGo 0.42.0. The panel comes up with the backlight
-on and displays a stable, correctly proportioned image: the white border frames
-the full screen, the four corner markers appear in the right corners with the
-right colours, the crosshair lands on the exact centre, and all eight colour
-bars render in the expected order (white, yellow, cyan, green, magenta, red,
-blue, black), confirming resolution, orientation, colour-channel wiring, and
-full-screen continuous scanout.
+on and displays a stable, correctly proportioned, smoothly animating image
+with the white border framing the full screen.
 
-Two problems found and fixed during that verification are described above: the
-red/blue channel assignment relative to the schematic's net names, and the
-scanout clock rate, which had to match Pimoroni's divider for the panel to
-display whole frames rather than a stretched leading fraction of one.
+Resolution, orientation and colour-channel wiring were established with a
+static test pattern (a border, four differently coloured corner markers, a
+centre crosshair and eight colour bars in a known order) which confirmed all
+eight bars rendered in the expected hue and order. Two defects were found and
+fixed that way, both described above: the red/blue channel assignment relative
+to the schematic's net names, and the scanout clock rate, which has to match
+Pimoroni's divider for the panel to display whole frames rather than a
+stretched leading fraction of one.
+
+A third defect showed up only once the panel was animating: a faint but
+persistent disturbance a little way down the screen, in the same place every
+frame, caused by the scanout loop waiting on the line DMA it had just started
+and so starving the timing FIFO on the first active row of each frame. The
+analysis and the fix are described under "Rendering strategy" above. The fix
+is build-verified and reasoned from the FIFO depth, but the artefact it
+addresses was faint enough that confirming its absence needs a careful look at
+the panel rather than a photograph.

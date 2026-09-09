@@ -5,6 +5,7 @@ package main
 import (
 	"device/rp"
 	"machine"
+	"math"
 	"math/bits"
 	"time"
 	"unsafe"
@@ -62,39 +63,35 @@ const (
 )
 
 const (
-	black   = 0x0000
-	white   = 0xffff
-	red     = 0xf800
-	green   = 0x07e0
-	blue    = 0x001f
-	yellow  = 0xffe0
-	cyan    = 0x07ff
-	magenta = 0xf81f
-)
+	white = 0xffff
 
-const (
-	borderWidth = 6  // white frame around the whole screen
-	cornerSize  = 60 // size of the orientation marker squares
-	crossWidth  = 4  // thickness of the center crosshair
-	numBars     = 8  // number of vertical color bars
+	borderWidth = 2 // white frame proving the full panel is scanned
+
+	// plasmaScale is how many horizontal pixels share one computed plasma
+	// sample. A line lasts about 42 us, which at 150 MHz is roughly 13
+	// cycles per pixel at full resolution - not enough to evaluate the
+	// field per pixel. Sampling every 4th pixel leaves a comfortable
+	// budget and is visually indistinguishable on a smooth gradient.
+	plasmaScale   = 4
+	plasmaSamples = width / plasmaScale
 )
 
 var (
-	lines [numLineKinds][width / 2]uint32
-	bars  = [numBars]uint16{white, yellow, cyan, green, magenta, red, blue, black}
-)
+	// lineBuf is double buffered: one line is fed to the PIO by DMA while
+	// the next is being computed into the other.
+	lineBuf [2][width / 2]uint32
 
-// The test pattern only ever contains four distinct scanlines, so they are
-// all built once at startup and each active row simply points its DMA at
-// the right one. Generating pixels on the fly instead is far too slow: a
-// line lasts about 42 us, which is nowhere near enough time to evaluate
-// the pattern for 480 pixels.
-const (
-	lineWhite        = iota // border rows and the crosshair's horizontal arm
-	lineTopCorner           // rows crossing the top-left/top-right markers
-	lineBottomCorner        // rows crossing the bottom-left/right markers
-	lineBars                // plain colour bars plus the crosshair's stem
-	numLineKinds
+	// sinTab is a full period of a sine wave scaled to a byte, indexed by
+	// a byte phase so that all plasma arithmetic stays in integers and
+	// wraps for free.
+	sinTab [256]uint8
+
+	// palette maps a plasma value straight to the packed, channel-ordered
+	// 32-bit word the PIO expects for two identical adjacent pixels, so
+	// the inner loop never has to touch reorderChannels.
+	palette [256]uint32
+
+	whiteWord uint32
 )
 
 func main() {
@@ -102,7 +99,7 @@ func main() {
 
 	initControlPins()
 	initDisplay()
-	buildLines()
+	buildTables()
 
 	p := pio.PIO1
 	dataSM, err := p.ClaimStateMachine()
@@ -113,8 +110,10 @@ func main() {
 	initScanoutPIO(p, dataSM, timingSM)
 	setBacklight(true)
 
+	var t uint8
 	for {
-		scanFrame(timingSM, dataSM)
+		scanFrame(timingSM, dataSM, t)
+		t++
 	}
 }
 
@@ -327,7 +326,27 @@ func setClkDiv(cfg *pio.StateMachineConfig, hz uint32) {
 	cfg.SetClkDivIntFrac(whole, frac)
 }
 
-func scanFrame(timingSM, dataSM pio.StateMachine) {
+// scanFrame emits exactly one frame of timing and pixel data.
+//
+// The panel has no GRAM, so every line of every frame has to be produced
+// on the fly. The line buffers are ping-ponged to overlap work with the
+// DMA: while one line is being clocked out to the panel, the next is
+// rendered into the other buffer.
+//
+// The CPU must never block on anything except a full timing FIFO. That
+// FIFO is only 8 words deep, or two rows' worth, and is what actually
+// paces this loop; stalling anywhere else for longer than that starves
+// the timing state machine and stretches a sync period. In particular
+// this loop waits for the *previous* line's DMA, inside startLineDMA,
+// rather than for the one it just started. Waiting for the line just
+// started is what an earlier revision did, and on the first active row
+// of each frame that meant blocking for the two rows until its IRQ 4
+// arrived, with no timing words being pushed meanwhile. The FIFO ran dry
+// every frame at the same row, which showed up as a faint but persistent
+// glitch a little way down the panel.
+func scanFrame(timingSM, dataSM pio.StateMachine, t uint8) {
+	buf := 0
+
 	for row := 0; row < timingVFront; row++ {
 		vsyncHigh := row >= timingVPulse
 		active := row >= timingVBack && row < timingVDisplay
@@ -337,7 +356,7 @@ func scanFrame(timingSM, dataSM pio.StateMachine) {
 		putTiming(timingSM, false, vsyncHigh, timingHPulse, pioNop)
 
 		if active {
-			startLineDMA(dataSM, lines[lineKind(sourceRow)][:])
+			startLineDMA(dataSM, lineBuf[buf][:])
 		}
 
 		instr := uint16(pioNop)
@@ -347,8 +366,17 @@ func scanFrame(timingSM, dataSM pio.StateMachine) {
 		putTiming(timingSM, true, vsyncHigh, timingHBack, instr)
 		putTiming(timingSM, true, vsyncHigh, timingHDisplay, pioNop)
 
-		if active {
-			waitLineDMA()
+		switch {
+		case row == 0:
+			// Render the first visible line during vertical blanking,
+			// where there is a whole line's slack and putTiming's
+			// blocking on a full FIFO provides the pacing.
+			renderLine(&lineBuf[buf], 0, t)
+		case active:
+			if next := sourceRow + 1; next < height {
+				renderLine(&lineBuf[buf^1], next, t)
+			}
+			buf ^= 1
 		}
 	}
 }
@@ -368,82 +396,78 @@ func putTiming(sm pio.StateMachine, hsync, vsync bool, pixelClocks uint16, instr
 	sm.TxPut(word)
 }
 
-// pixelColor returns the RGB565 colour of the static test pattern at (x, y).
-// It draws, from outermost to innermost: a white border spanning the full
-// screen (checks dimensions/full-screen updates), four differently coloured
-// corner squares (checks orientation and mirroring at a glance), a centre
-// crosshair (checks the exact centre lands where expected), and a set of
-// vertical colour bars in a well known order (checks colour channel wiring).
-func pixelColor(x, y int) uint16 {
-	if x < borderWidth || x >= width-borderWidth || y < borderWidth || y >= height-borderWidth {
-		return white
+// buildTables fills the sine and palette lookup tables. Doing the
+// floating point work once at startup keeps the per-line renderer to
+// integer table lookups, which is what makes it fit in the time a single
+// scanline allows.
+func buildTables() {
+	for i := range sinTab {
+		theta := 2 * math.Pi * float64(i) / 256
+		sinTab[i] = uint8(127.5 + 127.5*math.Sin(theta))
 	}
-	switch {
-	case y < borderWidth+cornerSize:
-		if x < borderWidth+cornerSize {
-			return red // top-left
-		}
-		if x >= width-borderWidth-cornerSize {
-			return green // top-right
-		}
-	case y >= height-borderWidth-cornerSize:
-		if x < borderWidth+cornerSize {
-			return blue // bottom-left
-		}
-		if x >= width-borderWidth-cornerSize {
-			return yellow // bottom-right
-		}
+
+	// A smooth rainbow: three sine waves 120 degrees apart. Because the
+	// palette wraps, the animation never shows a seam.
+	for i := range palette {
+		theta := 2 * math.Pi * float64(i) / 256
+		r := uint16(127.5+127.5*math.Sin(theta)) >> 3
+		g := uint16(127.5+127.5*math.Sin(theta+2*math.Pi/3)) >> 2
+		b := uint16(127.5+127.5*math.Sin(theta+4*math.Pi/3)) >> 3
+		palette[i] = packPixels(r<<11 | g<<5 | b)
 	}
-	const half = crossWidth / 2
-	cx, cy := width/2, height/2
-	if (x >= cx-half && x < cx+half) || (y >= cy-half && y < cy+half) {
-		return white
-	}
-	return bars[x/(width/numBars)]
+
+	whiteWord = packPixels(white)
 }
 
-// expandScanline fills dst with the RGB565 pixels for row, packed two
-// per 32-bit word ready for startLineDMA. Pimoroni's real firmware reads a
-// plain uint16 RGB565 framebuffer directly into a DMA channel configured
-// with a byte-swap (channel_config_set_bswap), and only then feeds the PIO,
-// whose `mov pins, ::isr` reverses the full 32-bit ISR before writing its
-// low 16 bits to the data pins. This example has no framebuffer or DMA
-// byte-swap, so it reproduces the same net transform in software: pack the
-// two raw pixel values exactly as they'd sit in memory, then apply the same
-// byte-swap the hardware DMA would have performed.
-func expandScanline(dst *[width / 2]uint32, row int) {
-	for i := 0; i < width/2; i++ {
-		c0 := reorderChannels(pixelColor(2*i, row))
-		c1 := reorderChannels(pixelColor(2*i+1, row))
-		dst[i] = bits.ReverseBytes32(uint32(c1)<<16 | uint32(c0))
-	}
+// packPixels converts one RGB565 colour into the 32-bit word the data
+// state machine expects for a pair of identical adjacent pixels.
+//
+// Pimoroni's real firmware reads a plain uint16 RGB565 framebuffer through
+// a DMA channel configured with a byte-swap (channel_config_set_bswap),
+// and only then feeds the PIO, whose `mov pins, ::isr` reverses the full
+// 32-bit ISR before writing its low 16 bits to the data pins. This example
+// has no framebuffer or DMA byte-swap, so it reproduces the same net
+// transform in software.
+func packPixels(c uint16) uint32 {
+	v := uint32(reorderChannels(c))
+	return bits.ReverseBytes32(v<<16 | v)
 }
 
-// buildLines renders one representative row for each distinct kind of
-// scanline in the test pattern.
-func buildLines() {
-	expandScanline(&lines[lineWhite], 0)
-	expandScanline(&lines[lineTopCorner], borderWidth)
-	expandScanline(&lines[lineBottomCorner], height-borderWidth-1)
-	expandScanline(&lines[lineBars], borderWidth+cornerSize)
-}
-
-// lineKind reports which prebuilt scanline row should be displayed with.
-func lineKind(row int) int {
-	const half = crossWidth / 2
-	cy := height / 2
-	switch {
-	case row < borderWidth || row >= height-borderWidth:
-		return lineWhite
-	case row < borderWidth+cornerSize:
-		return lineTopCorner
-	case row >= height-borderWidth-cornerSize:
-		return lineBottomCorner
-	case row >= cy-half && row < cy+half:
-		return lineWhite
-	default:
-		return lineBars
+// renderLine draws one scanline of the plasma into dst.
+//
+// The field is the sum of three sine waves - one moving vertically, one
+// horizontally, and one diagonally - each running at a different speed so
+// the pattern takes a long time to repeat. The phases are computed from
+// the full pixel coordinates and only truncated to a byte at the point of
+// indexing, which keeps the field continuous where the phase wraps.
+// Truncating earlier, before the diagonal term's shift, leaves visible
+// seams every 256 pixels.
+//
+// This has to finish within one line, about 42 us, while the previous line
+// is still being sent, hence the palette of ready-to-send words and the
+// horizontal subsampling.
+func renderLine(dst *[width / 2]uint32, row int, t uint8) {
+	if row < borderWidth || row >= height-borderWidth {
+		for i := range dst {
+			dst[i] = whiteWord
+		}
+		return
 	}
+
+	vertical := sinTab[uint8(row)+2*t]
+
+	for i := 0; i < plasmaSamples; i++ {
+		x := i * plasmaScale
+		v := vertical + sinTab[uint8(x)+t] + sinTab[uint8((x+row)>>1)+t]
+		w := palette[v]
+		dst[2*i] = w
+		dst[2*i+1] = w
+	}
+
+	// Left and right edges of the border. One word spans two pixels, so a
+	// two pixel border is exactly one word at each end.
+	dst[0] = whiteWord
+	dst[width/2-1] = whiteWord
 }
 
 // reorderChannels pre-permutes an RGB565 colour's bits so that, after
