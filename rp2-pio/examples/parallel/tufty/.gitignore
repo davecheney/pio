@@ -1,0 +1,6 @@
+.video/
+
+# video_frames_generated.go is tracked as a tiny synthetic placeholder (see
+# README.md, "Video asset"). Regenerating it locally with tools/deltagen
+# against the real source video overwrites the tracked file; do not commit
+# that result.

@@ -23,6 +23,12 @@ const (
 // 15 MHz has been verified visually clean on a Tufty 2040 panel.
 const busBaud = 15_000_000
 
+func configureBoard() {}
+
 func configureBacklight(pin machine.Pin, on bool) error {
 	return configureBacklightPWM(machine.PWM1, pin, on)
 }
+
+func startVideoCue() {}
+
+func finishVideoCue() {}

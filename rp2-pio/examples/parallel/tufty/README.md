@@ -18,11 +18,13 @@ firmware for the underlying Pimoroni Pico Plus 2 module:
 tinygo build -target=pico-plus2 -o /tmp/tufty2350.uf2 .
 ```
 
-The Tufty 2350 build produces a UF2 and links correctly, but it will not drive
-the panel at runtime until `piolib.NewParallel` grows RP2350B high-GPIO support.
-Tufty 2350 places `LCD_DB0..LCD_DB7` on `GPIO32..GPIO39`; the current parallel
-PIO helper uses a `uint32` pin mask and rejects PIO pin bases >= 32. RP2350B
-needs `GPIOBASE=16` plus PIO-relative pin indexing to represent these pins.
+Tufty 2350 places `LCD_DB0..LCD_DB7` on `GPIO32..GPIO39`. The parallel PIO
+helper selects the RP2350B `GPIOBASE=16` window and converts these physical
+GPIO numbers to PIO-relative pin indices.
+
+The board-specific setup also drives `POWER_EN` on `GPIO41` high before display
+initialization. Without this, the backlight can turn on while the panel remains
+blank.
 
 ## Board pin maps
 
@@ -47,11 +49,31 @@ Tufty 2350:
 | LCD_WR | GPIO30 |
 | LCD_RD | GPIO31 |
 | LCD_DB0..LCD_DB7 | GPIO32..GPIO39 |
+| POWER_EN | GPIO41 |
+
+## Video asset
+
+`video.go` plays back a generated per-frame mono (1-bit) video, expanded to
+RGB565 at display time. The actual frame data lives in
+`video_frames_generated.go`, produced by `tools/deltagen` from a source video
+(`ffmpeg`+`deltagen` convert it to 320x240 grayscale, dither it to 1-bit with
+a static 8x8 Bayer matrix, and block-delta encode each frame against the
+previous one, falling back to a full-frame copy when the delta is large).
+
+The copy tracked in this repository is a tiny synthetic placeholder (six
+frames generated from an `ffmpeg testsrc2` pattern), so the example builds
+and tests without the real source video or any copyrighted footage. To play
+back the real content locally:
+
+```sh
+go run ./tools/deltagen -input /path/to/video.webm -output video_frames_generated.go
+```
+
+This overwrites the tracked placeholder; do not commit the result.
 
 ## Bus clock
 
 The parallel PIO program has three instructions, so the PIO state machine runs
-at `3 * busBaud`. With `busBaud = 15_000_000`, the RP2350 default 150 MHz
-sysclk produces divider `3 + 85/256`, an actual WR rate of about 15.006 MHz,
-and a write cycle of about 66.64 ns. This remains within the ST7789 8080-II
-66 ns minimum write cycle.
+at `3 * busBaud`. Tufty 2040 uses the hardware-verified 15 MHz WR rate.
+Tufty 2350 uses the same 15 MHz WR rate after hardware validation on the
+RP2350B bus.

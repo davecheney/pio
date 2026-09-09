@@ -24,6 +24,8 @@ var framebuffer [displayW * displayH * 2]byte
 var display ST7789
 
 func main() {
+	configureBoard()
+
 	// Configure control pins to safe idle levels BEFORE bringing up the PIO
 	// parallel bus. If CS or DC are floating while the PIO state machine
 	// starts and puts its initial (zeroed) OSR contents on the bus, the panel
@@ -68,20 +70,59 @@ func main() {
 
 	display.CommonInit()
 
-	// Cycle through three demos at each of the four rotations. Each demo
-	// draws into the shared framebuffer with SetPixel and pushes it with
-	// Display(), so the Displayer interface gets a real workout in every
-	// orientation and the mapping foundation from PR #55 is exercised.
-	const demoDuration = 6 * time.Second
-	rotations := []Rotation{Rotation0, Rotation90, Rotation180, Rotation270}
-	for {
-		for _, r := range rotations {
-			display.configureDisplayRotation(r)
-			runBouncingRects(&display, demoDuration)
-			runMandelbrot(&display, demoDuration)
-			runPlasma(&display, demoDuration)
+	display.configureDisplayRotation(Rotation0)
+	runVideo(&display)
+}
+
+// prepareTransferBenchmark fills the framebuffer once, outside the measured loop.
+// The border, centre lines, and distinct quadrants make transposition and wrapping
+// immediately visible without adding drawing work to the benchmark itself.
+func prepareTransferBenchmark(st *ST7789) {
+	w, h := st.Size()
+	for y := int16(0); y < h; y++ {
+		for x := int16(0); x < w; x++ {
+			var c color.RGBA
+			switch {
+			case x == 0 || y == 0 || x == w-1 || y == h-1:
+				c = color.RGBA{255, 255, 255, 255}
+			case x == w/2 || y == h/2:
+				c = color.RGBA{255, 255, 0, 255}
+			case x < w/2 && y < h/2:
+				c = color.RGBA{255, 0, 0, 255}
+			case x >= w/2 && y < h/2:
+				c = color.RGBA{0, 255, 0, 255}
+			case x < w/2:
+				c = color.RGBA{0, 0, 255, 255}
+			default:
+				c = color.RGBA{255, 0, 255, 255}
+			}
+			st.SetPixel(x, y, c)
 		}
 	}
+}
+
+// runDisplayTransferBenchmark measures complete 320x240 framebuffer transfers.
+func runDisplayTransferBenchmark(st *ST7789, d time.Duration) {
+	deadline := time.Now().Add(d)
+	start := time.Now()
+	frames := 0
+	for time.Now().Before(deadline) {
+		if err := st.Display(); err != nil {
+			println("Display:", err.Error())
+			return
+		}
+		frames++
+	}
+	reportTransfer("display", frames, len(st.fb), time.Since(start))
+}
+
+func reportTransfer(name string, frames, frameBytes int, elapsed time.Duration) {
+	if frames == 0 || elapsed <= 0 {
+		return
+	}
+	fpsTenths := int(float64(frames) * float64(time.Second) * 10 / float64(elapsed))
+	bytesPerSecond := int64(frames*frameBytes) * int64(time.Second) / int64(elapsed)
+	println(name, "frames=", frames, "elapsed_ms=", int(elapsed/time.Millisecond), "fps=", fpsTenths, "/10", "bytes_per_sec=", bytesPerSecond)
 }
 
 // fillFB paints the whole framebuffer to a single RGB565 colour.
