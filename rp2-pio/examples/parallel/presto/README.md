@@ -1,0 +1,114 @@
+# Pimoroni Presto ST7701 display example
+
+This example drives the built-in 4 inch 480 x 480 IPS LCD on the Pimoroni
+Presto using RP2350 PIO. It is intentionally self-contained: Presto's display
+is an RGB/DPI-style panel and is not compatible with the existing `piolib`
+8080-style `Parallel` helper, so the example carries only the PIO programs and
+minimal DMA setup needed for scanout.
+
+## Hardware facts
+
+Authoritative sources used:
+
+- Pimoroni Presto product page:
+  <https://shop.pimoroni.com/products/presto>
+- Pimoroni Presto schematic linked from the product page:
+  <https://cdn.shopify.com/s/files/1/0174/1800/files/pico_presto_schematic.pdf?v=1734528559>
+- Pimoroni Presto board header:
+  <https://github.com/pimoroni/presto/blob/b96a8cbe3ff0b22213141e3d3810e8217a288b89/boards/presto/presto.h>
+- Pimoroni Presto display constants:
+  <https://github.com/pimoroni/presto/blob/b96a8cbe3ff0b22213141e3d3810e8217a288b89/modules/c/presto/presto.h>
+- Pimoroni ST7701 driver and PIO timing programs:
+  <https://github.com/pimoroni/presto/tree/b96a8cbe3ff0b22213141e3d3810e8217a288b89/drivers/st7701>
+- Pimoroni Presto touch driver:
+  <https://github.com/pimoroni/presto/blob/b96a8cbe3ff0b22213141e3d3810e8217a288b89/modules/py_frozen/touch.py>
+
+The board is powered by an RP2350B with 16 MiB of QSPI flash, 8 MiB of PSRAM,
+and an RM2/CYW43439 wireless module. TinyGo 0.42.0 does not include a dedicated
+`presto` target. Use `-target pico-plus2`, because that target inherits
+`rp2350b`, selects 16 MiB flash, and provides the `rp2350` and `rp2350b` build
+tags required by this example.
+
+## Display interface
+
+Presto's display is an ST7701S-controlled 480 x 480 panel. Commands are sent
+over the ST7701 3-line serial control interface, using a 9th D/CX bit before
+each byte. Pixel data is scanned continuously over a 16-bit parallel RGB565
+PIO bus, with separate HSYNC, VSYNC, data-enable, and dot-clock signals.
+
+| Signal | RP2350 GPIO |
+| ------ | ----------- |
+| LCD_D0..LCD_D17 | GPIO1..GPIO18 |
+| LCD_HSYNC | GPIO19 |
+| LCD_VSYNC | GPIO20 |
+| LCD_DE | GPIO21 |
+| LCD_DOTCLK | GPIO22 |
+| LCD serial clock | GPIO26 |
+| LCD serial data | GPIO27 |
+| LCD chip select | GPIO28 |
+| Ambient LED data | GPIO33 |
+| Touch interrupt | GPIO32 |
+| Touch I2C SDA/SCL | GPIO30/GPIO31 |
+| Default Qw/ST I2C SDA/SCL | GPIO40/GPIO41 |
+| Backlight PWM | GPIO45 |
+
+The touch controller is FT6236 at I2C address `0x48` on I2C1, with interrupt on
+GPIO32. Touch is documented here for completeness but is not used by this
+display scanout example.
+
+## Timing
+
+The timing constants follow Pimoroni's ST7701 driver:
+
+- vertical pulse: 8 lines
+- vertical back porch including pulse: 13 lines
+- active height: 480 lines
+- vertical front porch: 5 lines
+- horizontal front porch: 4 pixel clocks
+- horizontal pulse: 16 pixel clocks
+- horizontal back porch: 30 pixel clocks
+- active width: 480 pixel clocks
+
+This example requests an 8 MHz timing PIO instruction rate and a 16 MHz data
+PIO instruction rate. With TinyGo's default 150 MHz RP2350 clock, the timing
+divider is 18.75 and the data divider is 9.375. The ST7701 timing program
+toggles the dot clock with side-set, so the requested dot clock is 4 MHz and
+the frame rate is approximately:
+
+```text
+4_000_000 / ((4 + 16 + 30 + 480) * (8 + 5 + 480 + 5)) = 15.15 Hz
+```
+
+This is deliberately conservative for a buildable example that expands a small
+framebuffer in software. Pimoroni's C++ driver runs a faster, interrupt and
+DMA-driven continuous scanout path.
+
+## Framebuffer strategy
+
+A full 480 x 480 RGB565 framebuffer is 450 KiB, which is too large for a small
+standalone TinyGo example that avoids board-specific PSRAM setup. This example
+uses a 240 x 240 1 bpp framebuffer, expands each logical pixel to two
+horizontal and two vertical physical pixels, and converts to RGB565 scanlines
+on the fly. The moving test pattern checks:
+
+- full-screen scanout
+- square 480 x 480 geometry
+- orientation via diagonals and moving crosshairs
+- RGB565 colour ordering via coloured vertical zones
+
+## Build and flash
+
+Build with TinyGo 0.42.0:
+
+```sh
+tinygo build -target pico-plus2 -size short -o build/presto.uf2 ./rp2-pio/examples/parallel/presto
+```
+
+Flash only when a Presto is attached in BOOTSEL mode:
+
+```sh
+tinygo flash -target pico-plus2 ./rp2-pio/examples/parallel/presto
+```
+
+The example has been build-verified. It has not been hardware-verified unless
+noted by the person running it on a physical Presto.
