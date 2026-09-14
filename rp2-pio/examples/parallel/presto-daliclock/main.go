@@ -10,5 +10,11 @@ import (
 
 func main() {
 	start := time.Now()
+	if synced, err := syncClockFromNTP(); err == nil {
+		start = synced
+		println("ntp: synced to", start.String())
+	} else {
+		println("ntp: sync failed:", err.Error())
+	}
 	presto.Run(newRenderer(start))
 }

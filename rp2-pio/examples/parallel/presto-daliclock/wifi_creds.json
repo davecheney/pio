@@ -1,0 +1,6 @@
+{
+  "ssid": "YOUR_WIFI_SSID",
+  "password": "YOUR_WIFI_PASSWORD",
+  "hostname": "presto-daliclock",
+  "ntpServer": "162.159.200.1"
+}

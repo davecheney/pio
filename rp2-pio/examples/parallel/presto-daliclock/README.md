@@ -40,8 +40,24 @@ produces exactly `474x96`, centered at `x=3`, `y=192`.
 ## Clock behavior
 
 The display starts at `09:41:00` on every boot and then free-runs from TinyGo's
-monotonic elapsed time. There is deliberately no Wi-Fi, NTP, RTC, persistence,
-date display, touch UI, alarms, or configuration in this example.
+monotonic elapsed time. The Wi‑Fi/NTP branch installs a one-time sync step using
+`cyw43439` and `seqs` so a real NTP server can seed the clock before the renderer
+starts.
+
+`wifi.go` embeds
+`rp2-pio/examples/parallel/presto-daliclock/wifi_creds.json` at build time via
+`go:embed`, so the file must exist and is committed with placeholder values
+(`YOUR_WIFI_SSID` / `YOUR_WIFI_PASSWORD`). With placeholders in place,
+`loadWiFiConfig` rejects the config and the example falls back to the fixed
+`09:41:00` start with no network attempt, unchanged from the base behavior.
+
+To sync from a real NTP server, edit the file locally with a real
+SSID/password and a reachable IPv4 NTP server, then run
+`git update-index --skip-worktree rp2-pio/examples/parallel/presto-daliclock/wifi_creds.json`
+so your local edit is not accidentally committed or pushed. (Undo with
+`--no-skip-worktree` if you need to commit an intentional change to the
+template.) With valid credentials, the example joins Wi‑Fi, obtains a DHCP
+lease, and queries the configured NTP server before running the Dali clock.
 
 Each glyph row follows XDaliClock's scanline-segment model. A row is represented
 as filled `[left,right)` segments; during each second, matching segment endpoints
