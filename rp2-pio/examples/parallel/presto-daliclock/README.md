@@ -73,9 +73,9 @@ interpolate linearly from the current digit to the next digit. The interpolation
 position is multiplied by `1.2` and clamped to the end position, reproducing the
 original roughly 100 ms end-of-cycle linger.
 
-The clock uses a static light-grey-on-dark-grey palette: 90% white text on a
-10% white background, prepacked once to the display's RGB565 bus format (not
-computed per frame or per pixel). There is no colour cycling.
+Foreground and background colours cycle smoothly in Dali Clock style. Colours
+are computed once per frame and prepacked to the display's RGB565 bus format,
+not recomputed per pixel.
 
 ## Rendering architecture
 

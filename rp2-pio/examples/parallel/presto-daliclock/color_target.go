@@ -2,18 +2,13 @@
 
 package main
 
-import "github.com/tinygo-org/pio/rp2-pio/examples/parallel/internal/presto"
+import (
+	"time"
 
-// Static light-grey-on-dark-grey palette: 90% white text on a 10% white
-// background. Computed once (not per frame or per pixel) since the colours
-// no longer cycle.
-const (
-	foregroundLevel = uint8(230) // ~90% of 255
-	backgroundLevel = uint8(26)  // ~10% of 255
+	"github.com/tinygo-org/pio/rp2-pio/examples/parallel/internal/presto"
 )
 
-func clockColorWords() (foreground, background uint32) {
-	foreground = presto.PackPixels(presto.RGB565(foregroundLevel, foregroundLevel, foregroundLevel))
-	background = presto.PackPixels(presto.RGB565(backgroundLevel, backgroundLevel, backgroundLevel))
-	return foreground, background
+func colorWords(elapsed time.Duration) (foreground, background uint32) {
+	fr, fg, fb, br, bg, bb := colorRGB(elapsed)
+	return presto.PackPixels(presto.RGB565(fr, fg, fb)), presto.PackPixels(presto.RGB565(br, bg, bb))
 }

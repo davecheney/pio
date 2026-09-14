@@ -27,8 +27,7 @@ type renderer struct {
 // the device's wall clock is not itself corrected and comparing it against
 // a corrected time.Time via time.Since would yield a huge bogus duration.
 func newRenderer(start time.Time, epochSeconds int) *renderer {
-	foreground, background := clockColorWords()
-	return &renderer{start: start, epochSeconds: epochSeconds, foreground: foreground, background: background}
+	return &renderer{start: start, epochSeconds: epochSeconds}
 }
 
 func (r *renderer) BeginFrame(frame uint32) {
@@ -37,6 +36,7 @@ func (r *renderer) BeginFrame(frame uint32) {
 	r.fromDigits = clockDigits(r.currentTime)
 	r.toDigits = clockDigits(nextSecond(r.currentTime))
 	r.msec = morphMillis(elapsed)
+	r.foreground, r.background = colorWords(elapsed)
 }
 
 func (r *renderer) RenderLine(dst *presto.Line, row int) {
