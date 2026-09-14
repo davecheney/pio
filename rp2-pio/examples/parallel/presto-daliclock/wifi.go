@@ -54,27 +54,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// joinWithRetry attempts to join the given SSID up to attempts times. The
-// CYW43439's WPA2 4-way handshake occasionally times out (observed on
-// hardware as rxEvent PSK_SUP status=4 reason=15) for reasons unrelated to
-// configuration (AP/RF timing); a short retry with backoff resolves it
-// without masking a genuinely wrong SSID/password, which fails identically
-// on every attempt.
-func joinWithRetry(dev *cyw43439.Device, ssid string, opts cyw43439.JoinOptions, attempts int) error {
-	var err error
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			println("wifi: join attempt", i+1, "of", attempts)
-			time.Sleep(time.Duration(i) * time.Second)
-		}
-		if err = dev.Join(ssid, opts); err == nil {
-			return nil
-		}
-		println("wifi: join failed:", err.Error())
-	}
-	return err
-}
-
 func syncClockFromNTP() (time.Time, error) {
 	println("wifi: loading config")
 	cfg, err := loadWiFiConfig()
@@ -99,7 +78,14 @@ func syncClockFromNTP() (time.Time, error) {
 	if cfg.Password == "" {
 		joinOpts = cyw43439.JoinOptions{}
 	}
-	if err := joinWithRetry(dev, cfg.SSID, joinOpts, 3); err != nil {
+	// A single Join attempt: the CYW43439's WPA2 4-way handshake
+	// occasionally times out on hardware (rxEvent PSK_SUP status=4
+	// reason=15), but retrying Join or power-cycling/reinitializing the
+	// chip after a failure both leave it in a broken state (observed as
+	// immediate ioctl errors, or a corrupted SPI bus that crashes the
+	// device outright). A single clean attempt with a clear error on
+	// failure is safer than an unreliable retry.
+	if err := dev.Join(cfg.SSID, joinOpts); err != nil {
 		return time.Time{}, fmt.Errorf("join wifi: %w", err)
 	}
 	println("wifi: joined", cfg.SSID)
