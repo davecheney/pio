@@ -52,12 +52,20 @@ starts.
 `09:41:00` start with no network attempt, unchanged from the base behavior.
 
 To sync from a real NTP server, edit the file locally with a real
-SSID/password and a reachable IPv4 NTP server, then run
+SSID/password, a reachable IPv4 NTP server, and a fixed `utcOffsetMinutes`
+(see below), then run
 `git update-index --skip-worktree rp2-pio/examples/parallel/presto-daliclock/wifi_creds.json`
 so your local edit is not accidentally committed or pushed. (Undo with
 `--no-skip-worktree` if you need to commit an intentional change to the
 template.) With valid credentials, the example joins Wi‑Fi, obtains a DHCP
-lease, and queries the configured NTP server before running the Dali clock.
+lease, resolves the local gateway's hardware address via ARP (required since
+the NTP server is off-LAN), and queries the configured NTP server before
+running the Dali clock.
+
+NTP always returns UTC. The device has no way to sense timezone or DST, so
+`wifi_creds.json` has a `utcOffsetMinutes` field (e.g. `600` for UTC+10,
+`-300` for UTC-5) that is added to the synced time before it seeds the clock.
+It defaults to `0` (UTC) if omitted.
 
 Each glyph row follows XDaliClock's scanline-segment model. A row is represented
 as filled `[left,right)` segments; during each second, matching segment endpoints
@@ -65,9 +73,9 @@ interpolate linearly from the current digit to the next digit. The interpolation
 position is multiplied by `1.2` and clamped to the end position, reproducing the
 original roughly 100 ms end-of-cycle linger.
 
-Foreground and background colours cycle smoothly in Dali Clock style. Colours
-are computed once per frame and prepacked to the display's RGB565 bus format,
-not recomputed per pixel.
+The clock uses a static light-grey-on-dark-grey palette: 90% white text on a
+10% white background, prepacked once to the display's RGB565 bus format (not
+computed per frame or per pixel). There is no colour cycling.
 
 ## Rendering architecture
 

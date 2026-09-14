@@ -14,14 +14,20 @@ func main() {
 	time.Sleep(2 * time.Second)
 	println("boot: presto-daliclock starting")
 
-	start := time.Now()
+	epochSeconds := bootSeconds
 	println("boot: attempting NTP sync")
 	if synced, err := syncClockFromNTP(); err == nil {
-		start = synced
-		println("ntp: synced to", start.String())
+		epochSeconds = synced.Hour()*3600 + synced.Minute()*60 + synced.Second()
+		println("ntp: synced, starting clock at", synced.String())
 	} else {
 		println("ntp: sync failed:", err.Error())
 	}
+	// start is captured from the device's own (uncorrected) clock right
+	// before the render loop begins, so that time.Since(start) inside the
+	// renderer is always a small, correct, monotonically-increasing
+	// duration -- regardless of whether epochSeconds came from NTP or the
+	// fixed 09:41:00 default.
+	start := time.Now()
 	println("boot: starting renderer")
-	presto.Run(newRenderer(start))
+	presto.Run(newRenderer(start, epochSeconds))
 }

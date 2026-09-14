@@ -14,6 +14,7 @@ import (
 
 	"github.com/soypat/cyw43439"
 	"github.com/soypat/seqs/eth/dhcp"
+	"github.com/soypat/seqs/eth/ntp"
 	"github.com/soypat/seqs/stacks"
 )
 
@@ -25,6 +26,10 @@ type wifiConfig struct {
 	Password  string `json:"password"`
 	Hostname  string `json:"hostname"`
 	NTPServer string `json:"ntpServer"`
+	// UTCOffsetMinutes shifts the NTP-synced UTC time to local time. The
+	// device has no way to sense timezone or DST, so this must be set
+	// explicitly (e.g. 600 for UTC+10, -300 for UTC-5).
+	UTCOffsetMinutes int `json:"utcOffsetMinutes"`
 }
 
 func loadWiFiConfig() (wifiConfig, error) {
@@ -49,6 +54,27 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// joinWithRetry attempts to join the given SSID up to attempts times. The
+// CYW43439's WPA2 4-way handshake occasionally times out (observed on
+// hardware as rxEvent PSK_SUP status=4 reason=15) for reasons unrelated to
+// configuration (AP/RF timing); a short retry with backoff resolves it
+// without masking a genuinely wrong SSID/password, which fails identically
+// on every attempt.
+func joinWithRetry(dev *cyw43439.Device, ssid string, opts cyw43439.JoinOptions, attempts int) error {
+	var err error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			println("wifi: join attempt", i+1, "of", attempts)
+			time.Sleep(time.Duration(i) * time.Second)
+		}
+		if err = dev.Join(ssid, opts); err == nil {
+			return nil
+		}
+		println("wifi: join failed:", err.Error())
+	}
+	return err
+}
+
 func syncClockFromNTP() (time.Time, error) {
 	println("wifi: loading config")
 	cfg, err := loadWiFiConfig()
@@ -71,13 +97,10 @@ func syncClockFromNTP() (time.Time, error) {
 
 	joinOpts := cyw43439.JoinOptions{Passphrase: cfg.Password}
 	if cfg.Password == "" {
-		if err := dev.Join(cfg.SSID, cyw43439.JoinOptions{}); err != nil {
-			return time.Time{}, fmt.Errorf("join open wifi: %w", err)
-		}
-	} else {
-		if err := dev.Join(cfg.SSID, joinOpts); err != nil {
-			return time.Time{}, fmt.Errorf("join wifi: %w", err)
-		}
+		joinOpts = cyw43439.JoinOptions{}
+	}
+	if err := joinWithRetry(dev, cfg.SSID, joinOpts, 3); err != nil {
+		return time.Time{}, fmt.Errorf("join wifi: %w", err)
 	}
 	println("wifi: joined", cfg.SSID)
 
@@ -120,6 +143,24 @@ func syncClockFromNTP() (time.Time, error) {
 	stack.SetAddr(dhcpClient.Offer())
 	println("dhcp: bound, addr=", dhcpClient.Offer().String())
 
+	gateway := dhcpClient.Router()
+	if !gateway.IsValid() {
+		return time.Time{}, errors.New("DHCP did not provide a router/gateway address")
+	}
+	println("arp: resolving gateway", gateway.String())
+	if err := stack.ARP().BeginResolve(gateway); err != nil {
+		return time.Time{}, fmt.Errorf("arp begin: %w", err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for !stack.ARP().IsDone() && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	_, gatewayHW, err := stack.ARP().ResultAs6()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("arp resolve gateway %s: %w", gateway, err)
+	}
+	println("arp: gateway resolved")
+
 	ntpAddr, err := netip.ParseAddr(cfg.NTPServer)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse NTP server %q: %w", cfg.NTPServer, err)
@@ -128,9 +169,12 @@ func syncClockFromNTP() (time.Time, error) {
 		return time.Time{}, fmt.Errorf("NTP server %q is not IPv4", cfg.NTPServer)
 	}
 
+	// The NTP server lives beyond the local network, so Ethernet frames
+	// must be addressed to the gateway's hardware address, not our own
+	// and not the (unreachable-via-ARP) NTP server's address.
 	println("ntp: requesting time from", ntpAddr.String())
 	ntpClient := stacks.NewNTPClient(stack, 12345)
-	if err := ntpClient.BeginDefaultRequest(mac, ntpAddr); err != nil {
+	if err := ntpClient.BeginDefaultRequest(gatewayHW, ntpAddr); err != nil {
 		return time.Time{}, fmt.Errorf("ntp request: %w", err)
 	}
 
@@ -148,7 +192,16 @@ func syncClockFromNTP() (time.Time, error) {
 	}
 	println("ntp: response received, offset=", ntpClient.Offset().String())
 
-	now := time.Now().UTC().Add(ntpClient.Offset())
+	// ntpClient.Offset() is a duration measured relative to the NTP
+	// client's own internal zero-based clock (which started counting from
+	// the NTP epoch, 1900-01-01), not relative to time.Now()'s epoch. Adding
+	// it to ntp.BaseTime() reconstructs the true UTC calendar time; adding
+	// it to time.Now() (different epoch/reference) produces a nonsensical
+	// date roughly 126 years in the future.
+	now := ntp.BaseTime().Add(ntpClient.Offset())
+	// The device cannot sense timezone or DST, so shift by the configured
+	// fixed UTC offset to get local time for display.
+	now = now.Add(time.Duration(cfg.UTCOffsetMinutes) * time.Minute)
 	return now, nil
 }
 

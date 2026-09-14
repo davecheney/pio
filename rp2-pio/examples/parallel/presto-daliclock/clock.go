@@ -30,7 +30,15 @@ type clockTime struct {
 }
 
 func timeFromElapsed(elapsed time.Duration) clockTime {
-	total := (bootSeconds + int(elapsed/time.Second)) % secondsPerDay
+	return timeFromEpochAndElapsed(bootSeconds, elapsed)
+}
+
+// timeFromEpochAndElapsed computes the displayed clock time as epochSeconds
+// (a second-of-day, 0-86399) plus elapsed time, wrapping at 24h. The caller
+// is responsible for ensuring elapsed is measured from the same clock
+// reference the epoch was captured against (see newRenderer).
+func timeFromEpochAndElapsed(epochSeconds int, elapsed time.Duration) clockTime {
+	total := (epochSeconds + int(elapsed/time.Second)) % secondsPerDay
 	if total < 0 {
 		total += secondsPerDay
 	}

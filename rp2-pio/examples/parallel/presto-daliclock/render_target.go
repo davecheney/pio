@@ -9,26 +9,34 @@ import (
 )
 
 type renderer struct {
-	start       time.Time
-	fromDigits  [clockGlyphs]int
-	toDigits    [clockGlyphs]int
-	msec        int
-	foreground  uint32
-	background  uint32
-	currentTime clockTime
+	start        time.Time
+	epochSeconds int
+	fromDigits   [clockGlyphs]int
+	toDigits     [clockGlyphs]int
+	msec         int
+	foreground   uint32
+	background   uint32
+	currentTime  clockTime
 }
 
-func newRenderer(start time.Time) *renderer {
-	return &renderer{start: start}
+// newRenderer displays epochSeconds (a second-of-day) at the moment start
+// was captured, then free-runs forward using time.Since(start). start and
+// epochSeconds must be measured/derived consistently: start should come
+// from the device's own time.Now() (its monotonic reading is always
+// self-consistent), never from an NTP-corrected absolute time.Time, since
+// the device's wall clock is not itself corrected and comparing it against
+// a corrected time.Time via time.Since would yield a huge bogus duration.
+func newRenderer(start time.Time, epochSeconds int) *renderer {
+	foreground, background := clockColorWords()
+	return &renderer{start: start, epochSeconds: epochSeconds, foreground: foreground, background: background}
 }
 
 func (r *renderer) BeginFrame(frame uint32) {
 	elapsed := time.Since(r.start)
-	r.currentTime = timeFromElapsed(elapsed)
+	r.currentTime = timeFromEpochAndElapsed(r.epochSeconds, elapsed)
 	r.fromDigits = clockDigits(r.currentTime)
 	r.toDigits = clockDigits(nextSecond(r.currentTime))
 	r.msec = morphMillis(elapsed)
-	r.foreground, r.background = colorWords(elapsed)
 }
 
 func (r *renderer) RenderLine(dst *presto.Line, row int) {
