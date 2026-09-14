@@ -2,10 +2,10 @@
 
 This example drives the built-in 4 inch 480 x 480 IPS LCD on the Pimoroni
 Presto using RP2350 PIO, rendering an animated plasma at the panel's full
-resolution and refresh rate. It is intentionally self-contained: Presto's display
-is an RGB/DPI-style panel and is not compatible with the existing `piolib`
-8080-style `Parallel` helper, so the example carries only the PIO programs and
-minimal DMA setup needed for scanout.
+resolution and refresh rate. Presto's display is an RGB/DPI-style panel and is
+not compatible with the existing `piolib` 8080-style `Parallel` helper, so the
+example uses the small shared `../internal/presto` package that carries only the
+PIO programs and minimal DMA setup needed for scanout.
 
 ## Hardware facts
 
@@ -131,6 +131,10 @@ byte only at the point of indexing. Truncating earlier, before the diagonal
 term's shift, leaves clearly visible seams every 256 pixels.
 
 ## Rendering strategy
+
+The hardware scanout lives in `../internal/presto` so this plasma demo and other
+Presto examples can share the verified ST7701S initialization, PIO programs,
+pixel packing, DMA setup and double-buffered line loop.
 
 A full 480 x 480 RGB565 framebuffer is 450 KiB, too large to keep in RAM
 alongside a small standalone TinyGo example with no PSRAM setup. Because the
