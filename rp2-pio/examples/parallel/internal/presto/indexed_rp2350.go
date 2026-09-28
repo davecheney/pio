@@ -11,6 +11,13 @@ import (
 	pio "github.com/tinygo-org/pio/rp2-pio"
 )
 
+// StopReport, if set, is called once after scanout has stopped and the
+// diagnostic line has been printed. Serial output is safe at that point.
+var StopReport func()
+
+// usbQuietUS is the busy-wait between the final startup print and priming.
+const usbQuietUS = 200_000
+
 var (
 	timingBuf    [timingVFront * 4]uint32
 	timingStart  uint32
@@ -60,6 +67,13 @@ func RunIndexed(frame *IndexedFrame, palette *Palette, frameLimit uint32) {
 	indexedTiming(&timingBuf)
 	indexedStats = scanoutStats{}
 
+	// This is the last print before the stop report. USB CDC transmits
+	// queued output from the USBCTRL interrupt on this core; let it drain
+	// before scanout, where a line has only ~5 us of FIFO+HBLANK slack.
+	stage("priming FIFOs; starting scanout after USB quiet period (serial silent until stop)")
+	for t := micros(); micros()-t < usbQuietUS; {
+	}
+
 	frame.Expand(&lineBuf[0], 0, palette)
 	startLineDMA(dataSM, lineBuf[0][:])
 	startTimingDMA(timingSM)
@@ -67,7 +81,6 @@ func RunIndexed(frame *IndexedFrame, palette *Palette, frameLimit uint32) {
 	for !dataSM.IsTxFIFOFull() || !timingSM.IsTxFIFOFull() {
 		checkIndexed(p, dataSM, timingSM, start)
 	}
-	stage("FIFOs primed; starting scanout (serial silent until stop)")
 	p.HW().IRQ.Set(1<<0 | 1<<4)
 	dataSM.ClearTxStalled()
 	timingSM.ClearTxStalled()
@@ -113,6 +126,7 @@ func RunIndexed(frame *IndexedFrame, palette *Palette, frameLimit uint32) {
 			indexedStats.maxFrameUS = max(indexedStats.maxFrameUS, period)
 		}
 		lastBoundary = now
+		FrameCount.Store(n + 1)
 		if frameLimit != 0 && n+1 == frameLimit {
 			stopIndexed(p, dataSM, timingSM, "complete")
 		}
@@ -196,6 +210,9 @@ func stopIndexed(p *pio.PIO, dataSM, timingSM pio.StateMachine, reason string) {
 		"rows", indexedStats.rows, "expand total us", indexedStats.expandUS,
 		"expand max us", indexedStats.maxExpandUS,
 		"frame min/max us", indexedStats.minFrameUS, indexedStats.maxFrameUS)
+	if StopReport != nil {
+		StopReport()
+	}
 	for {
 		time.Sleep(time.Second)
 	}

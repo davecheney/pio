@@ -99,7 +99,9 @@ Serial behavior (USB CDC):
 2. `indexed: palette ready...`, `indexed: static image ready`.
 3. Stage lines with a microsecond timestamp: `RunIndexed entered`,
    `preconditions ok; initDisplay`, `display initialized; configuring PIO`,
-   `FIFOs primed; starting scanout (serial silent until stop)`.
+   `priming FIFOs; starting scanout after USB quiet period (serial silent until
+   stop)`, followed by a 200 ms busy-wait so queued USB output drains before
+   the first line deadlines.
 4. No output while scanout is active.
 5. After 3,000 frames (about 63 s) the backlight, PIO and DMA are stopped and
    one `indexed: complete frame 2999 row 479 ...` line is printed. A true

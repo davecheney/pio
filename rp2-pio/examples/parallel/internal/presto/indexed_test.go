@@ -2,7 +2,9 @@ package presto
 
 import (
 	"math/bits"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -149,5 +151,24 @@ func BenchmarkExpand(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frame.Expand(&line, i%Height, palette)
+	}
+}
+
+func TestWaitFrameReturnsNextGeneration(t *testing.T) {
+	var count atomic.Uint32
+	count.Store(7)
+	if got := WaitFrame(&count, 6); got != 7 {
+		t.Fatalf("WaitFrame = %d, want 7", got)
+	}
+	done := make(chan uint32)
+	go func() { done <- WaitFrame(&count, 7) }()
+	select {
+	case got := <-done:
+		t.Fatalf("WaitFrame returned %d before a new frame", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+	count.Store(9) // a skipped frame is visible to the caller as a gap
+	if got := <-done; got != 9 {
+		t.Fatalf("WaitFrame = %d, want 9", got)
 	}
 }
