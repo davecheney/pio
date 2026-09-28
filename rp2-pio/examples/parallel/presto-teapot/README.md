@@ -192,8 +192,13 @@ v7 (current):
   renderer's steady-state reads do not touch XIP.
 - The sin table is a generated constant, so there is no runtime
   `init`.
-- `main.main` blinks the backlight at 4 Hz while waiting up to 30 s for DTR,
-  then prints the B01–B13 breadcrumbs.
+- Boot is autonomous (v8). There is no wait for USB DTR and no backlight
+  blink; the demo boots and displays with no USB host. The B01–B13
+  breadcrumbs and the core-0 self-test are compiled out (`bootTrace = false`),
+  so normal boot queues no USB output. Set `bootTrace = true` for debugging.
+  The shared `RunIndexed` still prints its four stage lines before the 200 ms
+  no-yield USB quiet period, and fault reports are always printed if a
+  monitor is attached.
 - Interrupts are not masked, and real underflows are neither hidden nor
   cleared.
 
@@ -242,35 +247,38 @@ From `rp2-pio/examples/parallel`:
 ```sh
 tinygo build -target=pico-plus2 -scheduler=cores -o presto-teapot.uf2 ./presto-teapot
 # or: tinygo flash -target=pico-plus2 -scheduler=cores ./presto-teapot
-tinygo monitor
+tinygo monitor   # diagnostic/testing only; see the warning below
 ```
+
+The build uses TinyGo's default `-opt=z` and the target's default USB serial.
+No serial monitor is needed: the display comes up and the teapot starts
+rotating on its own.
+
+**Do not attach a USB serial host during scanout in normal standalone
+operation.** Host attach generates USB interrupt work on the scanline core.
+In a late-attach test (monitor opened after scanout had started) this caused
+a genuine data-SM underflow, `TXSTALL frame 954 row 6`. The monitor is for
+diagnostic builds and testing only. Attach it before power-up, or accept that
+a late attach can stop the display with a fault report.
 
 ## Expected serial output
 
+With no monitor attached, the backlight comes on within about 1 s of power-up
+(display init plus the 200 ms quiet period), then the teapot starts rotating
+after the 4-frame warmup (~85 ms) and runs indefinitely.
+
+With a monitor already attached at boot (`bootTrace = false`):
+
 ```text
-(backlight blinks at 4 Hz until the monitor opens, up to 30 s)
-teapot: B01 main.main reached; waited ms <n>
-teapot: B02 main core <m>
-teapot: B03 CPU MHz 150
-teapot: B04 verts 755
-teapot: B05 edges 1456
-teapot: B06 frame limit 0
-teapot: B07 palette and border ready; first vertex x <x>
-teapot: B07a warmup frames before renderer 4
-teapot: B07b self-test first step us <f>
-teapot: B07c self-test steady step us (draw+erase) <s>
-teapot: B07d self-test lit pixels after erase (expect 0) 0
-teapot: B08 starting renderer goroutine 0
-teapot: B09 renderer started after us <t>     (or: B09 RENDERER NOT STARTED ...)
-teapot: B10 scanout core <m>
-teapot: B11 renderer core <n>                  (expect n != m)
-teapot: B12 renderer frames so far (expect 0: warmup gate) 0
-teapot: B13 calling RunIndexed 0
-indexed: t_us ... RunIndexed entered / preconditions ok; initDisplay /
-         display initialized; configuring PIO /
-         priming FIFOs; starting scanout after USB quiet period (serial silent until stop)
+indexed: t_us ... RunIndexed entered
+indexed: t_us ... preconditions ok; initDisplay
+indexed: t_us ... display initialized; configuring PIO
+indexed: t_us ... priming FIFOs; starting scanout after USB quiet period (serial silent until stop)
     ... silence indefinitely while the teapot rotates ...
 ```
+
+With `bootTrace = true`, the B01–B13 breadcrumbs and the B07b–B07d
+self-test lines print before these.
 
 Normal operation prints nothing further. Any later `indexed:` line
 (`TXSTALL`, DMA error, timeout) followed by

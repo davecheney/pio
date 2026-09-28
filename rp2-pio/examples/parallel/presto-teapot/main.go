@@ -15,13 +15,13 @@ const (
 	// runs; RunIndexed then stops, reports and halts after that many frames.
 	frameLimit = 0
 
-	// USB CDC silently drops output until the host asserts DTR, so hold boot
-	// until a monitor is attached (bounded) instead of printing into the void.
-	dtrWait = 30 * time.Second
+	// bootTrace enables the B01–B13 boot breadcrumbs and the pre-scanout
+	// renderer self-test. It is off so the demo boots silently and needs no
+	// USB host; fault reports from RunIndexed are always printed.
+	bootTrace = false
+
 	// Maximum busy-wait for the renderer goroutine to report its core.
 	renderWaitUS = 3_000_000
-
-	backlight = machine.GPIO45
 )
 
 var (
@@ -42,20 +42,7 @@ var (
 )
 
 func main() {
-	// Visible breadcrumb that needs no USB: backlight blinks at 4 Hz while
-	// main.main waits for the monitor. No blink at all means boot stopped
-	// before main.main.
-	backlight.Configure(machine.PinConfig{Mode: machine.PinOutput})
-	usb, _ := machine.USBCDC.(interface{ DTR() bool })
-	start := time.Now()
-	for i := 0; usb != nil && !usb.DTR() && time.Since(start) < dtrWait; i++ {
-		backlight.Set(i&1 == 0)
-		time.Sleep(125 * time.Millisecond)
-	}
-	backlight.Low()
-	time.Sleep(100 * time.Millisecond)
-
-	crumb("B01 main.main reached; waited ms", uint32(time.Since(start).Milliseconds()))
+	crumb("B01 main.main reached", 0)
 	crumb("B02 main core", uint32(machine.CurrentCore()))
 	crumb("B03 CPU MHz", machine.CPUFrequency()/1_000_000)
 	crumb("B04 verts", uint32(len(teapotVerts)))
@@ -72,7 +59,9 @@ func main() {
 	r := rotationAt(0)
 	crumb("B07 palette and border ready; first vertex x", uint32(projectVertex(&teapotVerts[0], &r).x))
 	crumb("B07a warmup frames before renderer", warmupFrames)
-	selfTest()
+	if bootTrace {
+		selfTest()
+	}
 
 	presto.StopReport = func() {
 		println("teapot: renderer core", renderCore.Load(), "frames drawn", renderFrames.Load(),
@@ -152,7 +141,9 @@ func selfTest() {
 }
 
 func crumb(msg string, v uint32) {
-	println("teapot:", msg, v)
+	if bootTrace {
+		println("teapot:", msg, v)
+	}
 }
 
 func micros() uint32 {
