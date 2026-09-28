@@ -183,10 +183,9 @@ v7 (current):
     once per vsync, but it extends well past vertical blank into the visible
     area. Draw-first ordering means that region shows old edges, new edges or
     both.
-- **Visual verification is pending.** The user could not observe the display
-  during this run, so it is not yet confirmed on hardware that the v5 black
-  band is gone. Algorithmically, v7 has no all-black intermediate state, and
-  the host tests cover that.
+- **Visually accepted on hardware** ("looks really good"). The draw-first,
+  conditional-erase renderer removed the v5 black band, and the 150%
+  three-axis teapot displays well.
 - `(*presto.IndexedFrame).Expand` is `//go:section .ramfuncs`. TinyGo's
   `arm.ld` copies it with `.data`, so it executes from SRAM.
 - `main` copies the mesh tables into SRAM before starting the renderer, so the
@@ -313,5 +312,5 @@ FDEBUG bit 24 means the data SM stalled; bit 25 means the timing SM stalled.
     erase-then-draw.
   - v6 (mask diff): TXSTALL at frame 60 row 25, attributed to mask SRAM traffic.
   - v7 (generation indices): startup passed and a 90 s soak had no serial
-    fault; steady update 9,607 µs. Visual confirmation that the band is gone
-    is pending.
+    fault; steady update 9,607 µs. Visually accepted: no black band, and the
+    150% three-axis teapot "looks really good".
