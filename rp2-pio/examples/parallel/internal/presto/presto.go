@@ -5,16 +5,10 @@ package presto
 import (
 	"device/rp"
 	"machine"
-	"math/bits"
 	"time"
 	"unsafe"
 
 	pio "github.com/tinygo-org/pio/rp2-pio"
-)
-
-const (
-	Width  = 480
-	Height = 480
 )
 
 const (
@@ -36,18 +30,6 @@ const (
 )
 
 const (
-	timingVPulse   = 8
-	timingVBack    = 5 + timingVPulse
-	timingVDisplay = Height + timingVBack
-	timingVFront   = 5 + timingVDisplay
-
-	timingHFront   = 4
-	timingHPulse   = 16
-	timingHBack    = 30
-	timingHDisplay = Width
-)
-
-const (
 	cmdSWRESET    = 0x01
 	cmdSLPOUT     = 0x11
 	cmdDISPON     = 0x29
@@ -55,13 +37,6 @@ const (
 	cmdCOLMOD     = 0x3a
 	cmdCND2BKxSEL = 0xff
 )
-
-const (
-	pioNop  = 0xb042
-	pioIRQ4 = 0xd004
-)
-
-type Line [Width / 2]uint32
 
 type Renderer interface {
 	BeginFrame(frame uint32)
@@ -192,6 +167,12 @@ func pulseClock() {
 }
 
 func initScanoutPIO(p *pio.PIO, dataSM, timingSM pio.StateMachine) {
+	configureScanoutPIO(p, dataSM, timingSM)
+	dataSM.SetEnabled(true)
+	timingSM.SetEnabled(true)
+}
+
+func configureScanoutPIO(p *pio.PIO, dataSM, timingSM pio.StateMachine) {
 	timingHz, dataHz := scanoutClocks()
 	asm := pio.AssemblerV0{SidesetBits: 1}
 
@@ -251,9 +232,6 @@ func initScanoutPIO(p *pio.PIO, dataSM, timingSM pio.StateMachine) {
 	timingSM.Init(timingOffset, timingCfg)
 	timingSM.SetPinsMasked(0, pinMask(lcdHSync, 4))
 	timingSM.SetPindirsMasked(pinMask(lcdHSync, 4), pinMask(lcdHSync, 4))
-
-	dataSM.SetEnabled(true)
-	timingSM.SetEnabled(true)
 }
 
 func scanoutClocks() (timingHz, dataHz uint32) {
@@ -306,34 +284,10 @@ func scanFrame(timingSM, dataSM pio.StateMachine, renderer Renderer) {
 }
 
 func putTiming(sm pio.StateMachine, hsync, vsync bool, pixelClocks uint16, instr uint16) {
-	word := uint32(pixelClocks-3) << 16
-	if hsync {
-		word |= 1 << 30
-	}
-	if vsync {
-		word |= 1 << 31
-	}
-	word |= uint32(instr)
-
+	word := timingWord(hsync, vsync, pixelClocks, instr)
 	for sm.IsTxFIFOFull() {
 	}
 	sm.TxPut(word)
-}
-
-func PackPixels(c uint16) uint32 {
-	v := uint32(reorderChannels(c))
-	return bits.ReverseBytes32(v<<16 | v)
-}
-
-func RGB565(r, g, b uint8) uint16 {
-	return uint16(r&0xf8)<<8 | uint16(g&0xfc)<<3 | uint16(b)>>3
-}
-
-func reorderChannels(c uint16) uint16 {
-	r5 := uint16((c >> 11) & 0x1f)
-	g6 := uint16((c >> 5) & 0x3f)
-	b5 := c & 0x1f
-	return (g6&0x7)<<13 | b5<<8 | r5<<3 | (g6>>3)&0x7
 }
 
 func startLineDMA(sm pio.StateMachine, line []uint32) {
