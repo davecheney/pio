@@ -3,11 +3,14 @@ package main
 import "time"
 
 const (
-	videoWidth       = 320
-	videoHeight      = 240
-	videoStride      = videoWidth / 8
-	videoFrameBytes  = videoStride * videoHeight
-	videoFramePeriod = time.Second / 30
+	videoWidth      = 320
+	videoHeight     = 240
+	videoStride     = videoWidth / 8
+	videoFrameBytes = videoStride * videoHeight
+
+	// videoFramePeriod plays frames at the generated source rate (for
+	// example 12438/415, about 29.97 FPS) rather than a nominal 30 FPS.
+	videoFramePeriod = time.Second * videoFrameRateDen / videoFrameRateNum
 )
 
 var (

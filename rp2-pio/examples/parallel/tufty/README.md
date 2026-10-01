@@ -66,8 +66,13 @@ and tests without the real source video or any copyrighted footage. To play
 back the real content locally:
 
 ```sh
-go run ./tools/deltagen -input /path/to/video.webm -output video_frames_generated.go
+go run ./tools/deltagen -input /path/to/video.webm -end 3:38 -output video_frames_generated.go
 ```
+
+`-end` stops encoding at a source timecode. deltagen keeps every source frame
+and records the source frame rate (probed with `ffprobe`, e.g. 12438/415 or
+about 29.97 FPS) in the generated file, and playback paces frames at that
+rate. Do not resample to a nominal 30 FPS; that causes cadence stutter.
 
 This overwrites the tracked placeholder; do not commit the result.
 

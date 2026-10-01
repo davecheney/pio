@@ -64,3 +64,24 @@ func TestBlockDeltaRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFrameRate(t *testing.T) {
+	for _, tc := range []struct {
+		in       string
+		num, den int
+	}{
+		{"30/1", 30, 1},
+		{"12438/415", 12438, 415},
+		{"25", 25, 1},
+	} {
+		num, den, err := parseFrameRate(tc.in)
+		if err != nil || num != tc.num || den != tc.den {
+			t.Fatalf("parseFrameRate(%q) = (%d, %d, %v), want (%d, %d)", tc.in, num, den, err, tc.num, tc.den)
+		}
+	}
+	for _, in := range []string{"", "0/1", "30/0", "x/1"} {
+		if _, _, err := parseFrameRate(in); err == nil {
+			t.Fatalf("parseFrameRate(%q) succeeded, want error", in)
+		}
+	}
+}

@@ -2,6 +2,12 @@
 
 package main
 
+// Source frame rate is videoFrameRateNum/videoFrameRateDen frames per second.
+const (
+	videoFrameRateNum = 30
+	videoFrameRateDen = 1
+)
+
 func applyVideoDelta(frame *[9600]byte, delta string) {
 	const mapLen = 38
 	cursor := mapLen
